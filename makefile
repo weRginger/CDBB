@@ -1,4 +1,4 @@
-EXECS=cdbb nocdbb
+EXECS=cdbb ldbb nobb
 MPICC=mpicc
 
 all: ${EXECS}
@@ -6,8 +6,11 @@ all: ${EXECS}
 cdbb: cdbb.c
 	${MPICC} -o cdbb cdbb.c
 	
-nocdbb: nocdbb.c
-	${MPICC} -o nocdbb nocdbb.c
+nobb: nobb.c
+	${MPICC} -o nobb nobb.c
+
+ldbb: ldbb.c
+	${MPICC} -o ldbb ldbb.c
 
 clean:
 	rm -f ${EXECS}

@@ -1,5 +1,5 @@
 // Author: Ziqi Fan
-// Collaborative Distributed Burst Buffer
+// ldbb.c: local distributed burst buffer
 //
 #include <mpi.h>
 #include <stdio.h>
@@ -34,6 +34,9 @@ int find_max(double a[], int n) {
 }
 
 int main(int argc, char** argv) {
+
+    //printf("sizeof(char) %d \n", sizeof(char));
+
     // Initialize the MPI environment. The two arguments to MPI Init are not
     // currently used by MPI implementations, but are there in case future
     // implementations might need the arguments.
@@ -84,28 +87,31 @@ int main(int argc, char** argv) {
     //printf( "timeStart %f\n", timeStart );
     if(rank % 8 == 0) {
         printf("This is a burst buffer process.\n");
+
+        // mallc some space to receive data from writers
+        char *recvBuffer;
+        recvBuffer = (char*) malloc(sizeof(char) * fileSize);
+
+        // malloc 3GB as the local burst buffer
+        char *burstBuffer;
+        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 );
+
+        MPI_Status status;
+        int i = 0;
+        //unsigned long offset = 0;
+        for(i = 0; i < 7; i++) {
+            MPI_Recv(burstBuffer, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
+            //offset += fileSize;
+        }
+
+        free(burstBuffer);
+        //memcpy(burstBuffer+fileSize, recvBuffer, fileSize);
     }
     else {
         printf("This is a writer process.\n");
-
-        char filename[64];
-
-        char *prefix="/scratch.global/fan/rank";
-        strcpy(filename, prefix);
-
-        char buf[sizeof(int)+1];
-        snprintf(buf, sizeof buf, "%d", rank);
-
-        strcat(filename, buf);
-        strcat(filename, ".out");
-
-        fp = fopen(filename, "a+");
-        if(fp == NULL) {
-            printf("cannot open file for write. Exit!\n");
-            return 1;
-        }
-        fwrite(readBuffer , 1 , fileSize , fp );
-        fclose(fp);
+        MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
