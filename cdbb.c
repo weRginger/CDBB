@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     }
     else {
         printf("This is a writer process.\n");
-        MPI_Send(readBuffer, fileSize, MPI_CHAR, rank/8, 0, MPI_COMM_WORLD);
+        MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
