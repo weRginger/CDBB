@@ -76,6 +76,10 @@ int main(int argc, char** argv) {
     fseek(fp, 0, SEEK_END);
     rewind(fp);
     readBuffer = (char*) malloc(sizeof(char) * fileSize);
+    if (readBuffer == 0) {
+        printf("ERROR: Out of memory when malloc readBuffer\n");
+        return 1;
+    }
     fread(readBuffer, 1, fileSize, fp);
 
     fclose(fp);
@@ -85,8 +89,8 @@ int main(int argc, char** argv) {
 
     timeStart = MPI_Wtime();
     //printf( "timeStart %f\n", timeStart );
-    if(rank % 8 == 0) {
-        printf("This is a burst buffer process.\n");
+    if( (rank % 8 == 0) && (rank < size/2)) {
+        printf("This is a burst buffer on rank %d\n", rank);
 
         // mallc some space to receive data from writers
         char *recvBuffer;
@@ -99,7 +103,7 @@ int main(int argc, char** argv) {
         MPI_Status status;
         int i = 0;
         //unsigned long offset = 0;
-        for(i = 0; i < 7; i++) {
+        for(i = 0; i < 5; i++) {
             MPI_Recv(burstBuffer, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
@@ -109,9 +113,44 @@ int main(int argc, char** argv) {
         free(burstBuffer);
         //memcpy(burstBuffer+fileSize, recvBuffer, fileSize);
     }
-    else {
-        printf("This is a writer process.\n");
+    else if( (rank % 8 == 0) && (rank >= size/2)) {
+        printf("This is a burst buffer on rank %d\n", rank);
+
+        // mallc some space to receive data from writers
+        char *recvBuffer;
+        recvBuffer = (char*) malloc(sizeof(char) * fileSize);
+
+        // malloc 3GB as the local burst buffer
+        char *burstBuffer;
+        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 );
+        if (burstBuffer == 0) {
+            printf("ERROR: Out of memory when malloc burstBuffer\n");
+            return 1;
+        }
+
+        MPI_Status status;
+        int i = 0;
+        //unsigned long offset = 0;
+        for(i = 0; i < 2; i++) {
+            MPI_Recv(burstBuffer, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
+            //offset += fileSize;
+        }
+
+        free(burstBuffer);
+        //memcpy(burstBuffer+fileSize, recvBuffer, fileSize);
+    }
+    else if(rank > size/2) {
+        printf("My rank=%d is larger than size/2=%d, so I do nothing.\n", rank, size/2);
+    }
+    else if( (rank%8 >= 1) && (rank%8 <= 5) ) {
+        printf("This is a writer on rank %d, I will write to rank %d\n", rank, (rank/8)*8);
         MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
+    }
+    else {
+        printf("This is a writer on rank %d, I will write to rank %d\n", rank, (rank/8)*8+size/2);
+        MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8+size/2, 0, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
