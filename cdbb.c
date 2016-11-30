@@ -84,9 +84,17 @@ int main(int argc, char** argv) {
 
     fclose(fp);
 
-    // using MPI timer to get the start and end time
+    // using MPI timer to get the start and end walltime
     double timeStart, timeEnd;
 
+    // using clock timer to get the clock ticks
+    clock_t clockStart, clockEnd;
+
+    // using gettimeofday to get the wall time
+    struct timeval tvStart, tvEnd;
+
+    gettimeofday(&tvStart, NULL);
+    clockStart = clock();
     timeStart = MPI_Wtime();
     //printf( "timeStart %f\n", timeStart );
     if( (rank % 8 == 0) && (rank < size/2)) {
@@ -155,7 +163,13 @@ int main(int argc, char** argv) {
     MPI_Barrier(MPI_COMM_WORLD);
 
     timeEnd = MPI_Wtime();
-    printf( "Elapsed time for rank %d is %f\n", rank, timeEnd - timeStart );
+    clockEnd= clock();
+    gettimeofday(&tvEnd, NULL);
+    printf( "Elapsed MPI_Wtime for rank %d is %f\n", rank, timeEnd - timeStart );
+    printf( "Elapsed cpu time for rank %d is %f\n", rank, (clockEnd - clockStart) / CLOCKS_PER_SEC );
+
+    long elapsed = (tvEnd.tv_sec-tvStart.tv_sec)*1000000 + (tvEnd.tv_usec-tvStart.tv_usec);
+    printf( "Elapsed walltime for rank %d is %ld\n", rank, elapsed);
     //time[rank] = timeEnd - timeStart;
     //printf( "Longest elapsed time is %d\n", find_max(time,1000) );
 
