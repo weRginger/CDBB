@@ -1,15 +1,172 @@
 // Author: Ziqi Fan
 // sha1.c: added dedupe with sha1 and fixed chunking to local distributed burst buffer
 //
+
+#define _XOPEN_SOURCE 500 /* Enable certain library functions (strdup) on linux.  See feature_test_macros(7) */
+
 #include <mpi.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <time.h>
+#include <limits.h>
 #include <openssl/sha.h>
+#include <pthread.h>
 
 // dedupe use fixed chunking; size is 32 KB
 #define CHUNK_SIZE 32*1024
+
+pthread_mutex_t lock;
+
+// start: hash table implementation
+struct entry_s {
+    char *key;
+    char *value;
+    struct entry_s *next;
+};
+
+typedef struct entry_s entry_t;
+
+struct hashtable_s {
+    int size;
+    struct entry_s **table;
+};
+
+typedef struct hashtable_s hashtable_t;
+
+
+/* Create a new hashtable. */
+hashtable_t *ht_create( int size ) {
+
+    hashtable_t *hashtable = NULL;
+    int i;
+
+    if( size < 1 ) return NULL;
+
+    /* Allocate the table itself. */
+    if( ( hashtable = malloc( sizeof( hashtable_t ) ) ) == NULL ) {
+        return NULL;
+    }
+
+    /* Allocate pointers to the head nodes. */
+    if( ( hashtable->table = malloc( sizeof( entry_t * ) * size ) ) == NULL ) {
+        return NULL;
+    }
+    for( i = 0; i < size; i++ ) {
+        hashtable->table[i] = NULL;
+    }
+
+    hashtable->size = size;
+
+    return hashtable;
+}
+
+/* Hash a string for a particular hash table. */
+int ht_hash( hashtable_t *hashtable, char *key ) {
+
+    unsigned long int hashval;
+    int i = 0;
+
+    /* Convert our string to an integer */
+    while( hashval < ULONG_MAX && i < strlen( key ) ) {
+        hashval = hashval << 8;
+        hashval += key[ i ];
+        i++;
+    }
+
+    return hashval % hashtable->size;
+}
+
+/* Create a key-value pair. */
+entry_t *ht_newpair( char *key, char *value ) {
+    entry_t *newpair;
+
+    if( ( newpair = malloc( sizeof( entry_t ) ) ) == NULL ) {
+        return NULL;
+    }
+
+    if( ( newpair->key = strdup( key ) ) == NULL ) {
+        return NULL;
+    }
+
+    if( ( newpair->value = strdup( value ) ) == NULL ) {
+        return NULL;
+    }
+
+    newpair->next = NULL;
+
+    return newpair;
+}
+
+/* Insert a key-value pair into a hash table. */
+void ht_set( hashtable_t *hashtable, char *key, char *value ) {
+    int bin = 0;
+    entry_t *newpair = NULL;
+    entry_t *next = NULL;
+    entry_t *last = NULL;
+
+    bin = ht_hash( hashtable, key );
+
+    next = hashtable->table[ bin ];
+
+    while( next != NULL && next->key != NULL && strcmp( key, next->key ) > 0 ) {
+        last = next;
+        next = next->next;
+    }
+
+    /* There's already a pair.  Let's replace that string. */
+    if( next != NULL && next->key != NULL && strcmp( key, next->key ) == 0 ) {
+
+        free( next->value );
+        next->value = strdup( value );
+
+        /* Nope, could't find it.  Time to grow a pair. */
+    } else {
+        newpair = ht_newpair( key, value );
+
+        /* We're at the start of the linked list in this bin. */
+        if( next == hashtable->table[ bin ] ) {
+            newpair->next = next;
+            hashtable->table[ bin ] = newpair;
+
+            /* We're at the end of the linked list in this bin. */
+        } else if ( next == NULL ) {
+            last->next = newpair;
+
+            /* We're in the middle of the list. */
+        } else  {
+            newpair->next = next;
+            last->next = newpair;
+        }
+    }
+}
+
+/* Retrieve a key-value pair from a hash table. */
+char *ht_get( hashtable_t *hashtable, char *key ) {
+    int bin = 0;
+    entry_t *pair;
+
+    bin = ht_hash( hashtable, key );
+
+    /* Step through the bin, looking for our value. */
+    pair = hashtable->table[ bin ];
+    while( pair != NULL && pair->key != NULL && strcmp( key, pair->key ) > 0 ) {
+        pair = pair->next;
+    }
+
+    char *notFound = "Key not found!";
+
+    /* Did we actually find anything? */
+    if( pair == NULL || pair->key == NULL || strcmp( key, pair->key ) != 0 ) {
+        return notFound;
+
+    } else {
+        return pair->value;
+    }
+
+}
+// end: hash table implementation
+
 
 unsigned long fsize(char* file)
 {
@@ -18,23 +175,6 @@ unsigned long fsize(char* file)
     unsigned long len = (unsigned long)ftell(f);
     fclose(f);
     return len;
-}
-
-int find_max(double a[], int n) {
-    int c, index;
-    double max;
-
-    max = a[0];
-    index = 0;
-
-    for (c = 1; c < n; c++) {
-        if (a[c] > max) {
-            index = c;
-            max = a[c];
-        }
-    }
-
-    return index;
 }
 
 int main(int argc, char** argv) {
@@ -83,6 +223,9 @@ int main(int argc, char** argv) {
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
 
+    // initiate hash table
+    hashtable_t *hashtable = ht_create( 65536 );
+
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
 
@@ -113,7 +256,7 @@ int main(int argc, char** argv) {
         //memcpy(burstBuffer+fileSize, recvBuffer, fileSize);
     }
     else {
-        printf("This is a writer process.\n");
+        printf("$This is a writer process.\n");
 
         // sha1
         int i = 0;
@@ -130,7 +273,17 @@ int main(int argc, char** argv) {
             for (i=0; i < SHA_DIGEST_LENGTH; i++) {
                 sprintf((char*)&(buf[i*2]), "%02x", temp[i]);
             }
-            printf("num %d SHA1 is %s\n", num++, buf);
+            //printf("num %d SHA1 is %s\n", num++, buf);
+
+            pthread_mutex_lock(&lock);
+            char* val = ht_get(hashtable, buf);
+            //printf( "ht_get(%s): %s\n", buf, val);
+            if(strcmp(val, "Key not found!") == 0) {
+                //printf( "debug: line %d\n", __LINE__ );
+                ht_set(hashtable, buf, "duplicate");
+            }
+            pthread_mutex_unlock(&lock);
+
             offset += CHUNK_SIZE;
         }
 
@@ -141,16 +294,11 @@ int main(int argc, char** argv) {
 
     timeEnd = MPI_Wtime();
     printf( "Elapsed time for rank %d is %f\n", rank, timeEnd - timeStart );
-    //time[rank] = timeEnd - timeStart;
-    //printf( "Longest elapsed time is %d\n", find_max(time,1000) );
 
     free(readBuffer);
 
     // Finalize the MPI environment. No more MPI calls can be made after this
     MPI_Finalize();
-
-    //int maxIndex = find_max(time,1000);
-    //printf( "maxIndex is %d\n", maxIndex );
 
     return 0;
 }
