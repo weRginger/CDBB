@@ -34,9 +34,6 @@ int find_max(double a[], int n) {
 }
 
 int main(int argc, char** argv) {
-
-    //printf("sizeof(char) %d \n", sizeof(char));
-
     // Initialize the MPI environment. The two arguments to MPI Init are not
     // currently used by MPI implementations, but are there in case future
     // implementations might need the arguments.
@@ -55,9 +52,6 @@ int main(int argc, char** argv) {
     int name_len;
     MPI_Get_processor_name(processor_name, &name_len);
 
-    // Print off a hello world message
-    printf("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
-
     FILE *fp;
 
     fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
@@ -66,12 +60,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // store all the processing time
-    //double time[1000] = 0;
-
     // read file to buffer
     unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
-    printf("fileSize = %u\n", fileSize);
     char *readBuffer;
     fseek(fp, 0, SEEK_END);
     rewind(fp);
@@ -82,12 +72,9 @@ int main(int argc, char** argv) {
 
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
-
     timeStart = MPI_Wtime();
-    //printf( "timeStart %f\n", timeStart );
-    if(rank % 8 == 0) {
-        printf("This is a burst buffer process.\n");
 
+    if(rank % 8 == 0) {
         // mallc some space to receive data from writers
         char *recvBuffer;
         recvBuffer = (char*) malloc(sizeof(char) * fileSize);
@@ -107,28 +94,24 @@ int main(int argc, char** argv) {
             unsigned long incomingDataSize;
             MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             int checkResult = 0;
+            // BB has no space left
             if(burstBufferOffset + incomingDataSize > burstBufferMaxSize) {
                 checkResult = 0;
                 MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-                printf("burst buffer check receive from rank %d. No enough BB space left\n", status.MPI_SOURCE);
+                printf("BB %d: No enough BB space left for rank %d\n", rank, status.MPI_SOURCE);
             }
+            // BB has enough space; let writer send the real data
             else {
                 checkResult = 1;
                 MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-
                 MPI_Recv(burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
-                //MPI_Recv(burstBuffer+burstBufferOffset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
                 burstBufferOffset += incomingDataSize;
-                printf("burst buffer receive from rank %d. burstBufferOffset is %u\n", status.MPI_SOURCE, burstBufferOffset);
+                printf("BB %d: burst buffer receive %u data from rank %d. burstBufferOffset is %u\n", rank, incomingDataSize, status.MPI_SOURCE, burstBufferOffset);
             }
         }
-
         free(burstBuffer);
-        //memcpy(burstBuffer+fileSize, recvBuffer, fileSize);
     }
     else {
-        printf("This is a writer process.\n");
-
         // before sending the real data, send fileSize to BB to check how much space left
         MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, (rank/8)*8, 0, MPI_COMM_WORLD);
         int checkResult;
@@ -136,26 +119,20 @@ int main(int argc, char** argv) {
         // only there is enough space left in BB, we will send the real data to it.
         if(checkResult == 1) {
             MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 2, MPI_COMM_WORLD);
-            printf("Rank %d sends %u amount of data to BB\n", rank, fileSize);
+            printf("Writer %d: send %u amount of data to BB\n", rank, fileSize);
         }
         else {
-            printf("Not enough space left in BB for rank %d\n", rank);
+            printf("Writer %d: Not enough space left in BB\n", rank);
         }
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
     timeEnd = MPI_Wtime();
     printf( "Elapsed time for rank %d is %f\n", rank, timeEnd - timeStart );
-    //time[rank] = timeEnd - timeStart;
-    //printf( "Longest elapsed time is %d\n", find_max(time,1000) );
 
     free(readBuffer);
 
     // Finalize the MPI environment. No more MPI calls can be made after this
     MPI_Finalize();
-
-    //int maxIndex = find_max(time,1000);
-    //printf( "maxIndex is %d\n", maxIndex );
-
     return 0;
 }
