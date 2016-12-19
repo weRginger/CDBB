@@ -94,16 +94,33 @@ int main(int argc, char** argv) {
 
         // malloc 3GB as the local burst buffer
         char *burstBuffer;
+        unsigned long burstBufferMaxSize = 3221225472; // = 3*1024*1024*1024
         burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 );
+
+        unsigned long burstBufferOffset = 0;
 
         MPI_Status status;
         int i = 0;
         //unsigned long offset = 0;
         for(i = 0; i < 7; i++) {
-            MPI_Recv(burstBuffer, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-            //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-            printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
-            //offset += fileSize;
+            // receive from writer how much data it wants to write
+            unsigned long incomingDataSize;
+            MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            int checkResult = 0;
+            if(burstBufferOffset + incomingDataSize > burstBufferMaxSize) {
+                checkResult = 0;
+                MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
+                printf("burst buffer check receive from rank %d. No enough BB space left\n", status.MPI_SOURCE);
+            }
+            else {
+                checkResult = 1;
+                MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
+
+                MPI_Recv(burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
+                //MPI_Recv(burstBuffer+burstBufferOffset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+                burstBufferOffset += incomingDataSize;
+                printf("burst buffer receive from rank %d. burstBufferOffset is %u\n", status.MPI_SOURCE, burstBufferOffset);
+            }
         }
 
         free(burstBuffer);
@@ -111,7 +128,19 @@ int main(int argc, char** argv) {
     }
     else {
         printf("This is a writer process.\n");
-        MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
+
+        // before sending the real data, send fileSize to BB to check how much space left
+        MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, (rank/8)*8, 0, MPI_COMM_WORLD);
+        int checkResult;
+        MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // only there is enough space left in BB, we will send the real data to it.
+        if(checkResult == 1) {
+            MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 2, MPI_COMM_WORLD);
+            printf("Rank %d sends %u amount of data to BB\n", rank, fileSize);
+        }
+        else {
+            printf("Not enough space left in BB for rank %d\n", rank);
+        }
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
