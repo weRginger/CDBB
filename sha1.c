@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
         int i = 0;
         //unsigned long offset = 0;
         for(i = 0; i < 7; i++) {
-            MPI_Recv(burstBuffer, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            //MPI_Recv(burstBuffer, fileSize/10, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
             //offset += fileSize;
@@ -288,7 +288,7 @@ int main(int argc, char** argv) {
         }
 
         // send
-        MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
+        //MPI_Send(readBuffer, fileSize/10, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 
