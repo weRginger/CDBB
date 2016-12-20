@@ -1,5 +1,5 @@
 // Author: Ziqi Fan
-// sha1.c: added dedupe with sha1 and fixed chunking to local distributed burst buffer
+// ldbb-dedupe.c: added dedupe with sha1 and fixed chunking to local distributed burst buffer
 //
 
 #define _XOPEN_SOURCE 500 /* Enable certain library functions (strdup) on linux.  See feature_test_macros(7) */

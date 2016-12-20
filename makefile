@@ -1,4 +1,4 @@
-EXECS=cdbb ldbb nobb sha1
+EXECS=cdbb ldbb nobb dedupe
 MPICC=mpicc
 
 all: ${EXECS}
@@ -6,8 +6,8 @@ all: ${EXECS}
 cdbb: cdbb.c
 	${MPICC} -o cdbb cdbb.c
  
-sha1: sha1.c
-	${MPICC} -o sha1 -lssl sha1.c
+dedupe: dedupe.c
+	${MPICC} -o dedupe -lssl dedupe.c
 	
 nobb: nobb.c
 	${MPICC} -o nobb nobb.c
