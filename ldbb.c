@@ -122,7 +122,22 @@ int main(int argc, char** argv) {
             printf("Writer %d: send %u amount of data to BB\n", rank, fileSize);
         }
         else {
-            printf("Writer %d: Not enough space left in BB\n", rank);
+            printf("Writer %d: Not enough space left in BB -> write to PFS\n", rank);
+
+            char filename[64];
+            char *prefix="/scratch.global/fan/rank";
+            strcpy(filename, prefix);
+            char buf[sizeof(int)+1];
+            snprintf(buf, sizeof buf, "%d", rank);
+            strcat(filename, buf);
+            strcat(filename, ".out");
+            fp = fopen(filename, "a+");
+            if(fp == NULL) {
+                printf("cannot open file for write. Exit!\n");
+                return 1;
+            }
+            fwrite(readBuffer , 1 , fileSize , fp );
+            fclose(fp);
         }
     }
     MPI_Barrier(MPI_COMM_WORLD);
