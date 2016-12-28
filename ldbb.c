@@ -1,6 +1,7 @@
 // Author: Ziqi Fan
 // ldbb.c: local distributed burst buffer
 //
+
 #include <mpi.h>
 #include <stdio.h>
 #include <string.h>
@@ -119,8 +120,11 @@ int main(int argc, char** argv) {
     fseek(fp, 0, SEEK_END);
     rewind(fp);
     readBuffer = (char*) malloc(sizeof(char) * fileSize);
+    if (readBuffer == 0) {
+        printf("ERROR: Out of memory when malloc readBuffer\n");
+        return 1;
+    }
     fread(readBuffer, 1, fileSize, fp);
-
     fclose(fp);
 
     // using MPI timer to get the start and end time
