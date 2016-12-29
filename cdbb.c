@@ -40,7 +40,7 @@ int findSmallest(unsigned long* array, int size) {
             ans = i;
         }
     }
-    printf("Rank of smallest burst buffer offset is %d, offset is %u\n", ans, smallest);
+    printf("Rank of smallest burst buffer offset is %d, offset is %u\n\n", ans, smallest);
     return ans;
 }
 
@@ -49,23 +49,33 @@ void* producer(void *ptr) {
     MPI_Status status;
     int i;
 
-    for (i = 1; i <= 7; i++) {
-        // receive from writer how much data it wants to write
-        unsigned long incomingDataSize;
+    while(1) {
+        unsigned long incomingDataSize; // receive from writer how much data it wants to write
         MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
 
-        int rankOfSmallestBurstBufferOffset = findSmallest(tp->burstBufferOffset, tp->totalRank);
+        int localBBrank = tp->rank / 8; // the rank number of local burst buffer
 
-        int checkResult = 0;
-        // BB has no space left
-        if(tp->burstBufferOffset[rankOfSmallestBurstBufferOffset] + incomingDataSize > burstBufferMaxSize) {
-            checkResult = 0;
+        int checkResult = 0; // denote whether any BB has space left; 1 means yes and 0 means no
+
+        // local BB has enough space; let writer send the real data
+        if(tp->burstBufferOffset[localBBrank] + incomingDataSize < burstBufferMaxSize) {
+            // broadcast the changed burst buffer offset to other ranks
+            tp->burstBufferOffset[localBBrank] += incomingDataSize;
+            MPI_Bcast(tp->burstBufferOffset, tp->totalRank / 8, MPI_UNSIGNED_LONG, tp->rank, MPI_COMM_WORLD);
+
+            checkResult = 1;
             MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-            MPI_Send(&rankOfSmallestBurstBufferOffset, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
-            printf("BB producer %d: No enough BB space left for rank %d\n", tp->rank, status.MPI_SOURCE);
+            MPI_Send(&localBBrank, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
+            MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
+
+            printf("BB producer %d: burst buffer receive %u data from rank %d. burstBufferOffset is %u\n\n", tp->rank, incomingDataSize, status.MPI_SOURCE, tp->burstBufferOffset[localBBrank]);
+
+            continue;
         }
-        // BB has enough space; let writer send the real data
-        else {
+
+        int rankOfSmallestBurstBufferOffset = findSmallest(tp->burstBufferOffset, tp->totalRank);
+        // remote BB has enough space; let writer send the read data
+        if(tp->burstBufferOffset[rankOfSmallestBurstBufferOffset] + incomingDataSize < burstBufferMaxSize) {
             // broadcast the changed burst buffer offset to other ranks
             tp->burstBufferOffset[rankOfSmallestBurstBufferOffset] += incomingDataSize;
             MPI_Bcast(tp->burstBufferOffset, tp->totalRank / 8, MPI_UNSIGNED_LONG, tp->rank, MPI_COMM_WORLD);
@@ -75,7 +85,14 @@ void* producer(void *ptr) {
             MPI_Send(&rankOfSmallestBurstBufferOffset, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
             MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
 
-            printf("BB producer %d: burst buffer receive %u data from rank %d. burstBufferOffset is %u\n", tp->rank, incomingDataSize, status.MPI_SOURCE, tp->burstBufferOffset[rankOfSmallestBurstBufferOffset]);
+            printf("BB producer %d: burst buffer receive %u data from rank %d. burstBufferOffset is %u\n\n", tp->rank, incomingDataSize, status.MPI_SOURCE, tp->burstBufferOffset[rankOfSmallestBurstBufferOffset]);
+        }
+        // all BBs do not have enough space; writer has to bypass BB and write to PFS
+        else {
+            checkResult = 0;
+            MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
+            MPI_Send(&rankOfSmallestBurstBufferOffset, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
+            printf("BB producer %d: No enough BB space left for rank %d\n\n", tp->rank, status.MPI_SOURCE);
         }
     }
     pthread_exit(0);
@@ -84,7 +101,7 @@ void* producer(void *ptr) {
 void* consumer(void *ptr) {
     struct threadParams *tp = ptr;
 
-    printf("BB consumer %d: just entered, nothing been done yet\n", tp->rank);
+    printf("BB consumer %d: just entered, nothing been done yet\n\n", tp->rank);
     while(1) {
         if(tp->burstBufferOffset[tp->rank / 8] > 0) {
             char filename[64];
@@ -97,7 +114,7 @@ void* consumer(void *ptr) {
             FILE *fp;
             fp = fopen(filename, "a+");
             if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n");
+                printf("cannot open file for write. Exit!\n\n");
                 return;
             }
             fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
@@ -106,7 +123,7 @@ void* consumer(void *ptr) {
             tp->burstBufferOffset[tp->rank / 8] -= tp->fileSize;
             // broadcast the changed burst buffer offset to other ranks
             MPI_Bcast(tp->burstBufferOffset, tp->totalRank / 8, MPI_UNSIGNED_LONG, tp->rank, MPI_COMM_WORLD);
-            printf("BB consumer %d: drained %d amount of data to PFS, burstBufferOffset is %d\n", tp->rank, tp->fileSize, tp->burstBufferOffset[tp->rank / 8]);
+            printf("BB consumer %d: drained %d amount of data to PFS, burstBufferOffset is %d\n\n", tp->rank, tp->fileSize, tp->burstBufferOffset[tp->rank / 8]);
         }
     }
     pthread_exit(0);
@@ -131,11 +148,51 @@ int main(int argc, char** argv) {
     int name_len;
     MPI_Get_processor_name(processor_name, &name_len);
 
-    FILE *fp;
+    // Print off a hello world message
+    printf("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
+    /* tried to create writer MPI group for the purpose of
+     * controlling when to terminate BB processes,
+     * but failed ...
+     *
+    // Get the group of processes in MPI_COMM_WORLD
+    MPI_Group world_group;
+    MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+
+    int n = rank / 8 * 7;
+    int* writerRanks = (int*) malloc(sizeof(int) * n);
+    int i,j;
+    for(i=0; i<rank; i++) {
+        if(i % 8 != 0) {
+            writerRanks[j++] = i;
+        }
+    }
+
+    // Construct a group containing all of the prime ranks in world_group
+    MPI_Group writer_group;
+    MPI_Group_incl(world_group, n, writerRanks, &writer_group);
+
+    // Create a new communicator based on the group
+    MPI_Comm writer_comm;
+    MPI_Comm_create_group(MPI_COMM_WORLD, writer_group, 0, &writer_comm);
+
+    int writer_rank = -1, writer_size = -1;
+    // If this rank isn't in the new communicator, it will be
+    // MPI_COMM_NULL. Using MPI_COMM_NULL for MPI_Comm_rank or
+    // MPI_Comm_size is erroneous
+    if (MPI_COMM_NULL != writer_comm) {
+        MPI_Comm_rank(writer_comm, &writer_rank);
+        MPI_Comm_size(writer_comm, &writer_size);
+    }
+
+    printf("WORLD RANK/SIZE: %d/%d \t PRIME RANK/SIZE: %d/%d\n", rank, size, writer_rank, writer_size);
+    *
+    */
+
+    FILE *fp;
     fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
     if(fp == NULL) {
-        printf("cannot open file for read. Exit!\n");
+        printf("cannot open file for read. Exit!\n\n");
         return 1;
     }
 
@@ -146,7 +203,7 @@ int main(int argc, char** argv) {
     rewind(fp);
     readBuffer = (char*) malloc(sizeof(char) * fileSize);
     if (readBuffer == 0) {
-        printf("ERROR: Out of memory when malloc readBuffer\n");
+        printf("ERROR: Out of memory when malloc readBuffer\n\n");
         return 1;
     }
     fread(readBuffer, 1, fileSize, fp);
@@ -206,10 +263,10 @@ int main(int argc, char** argv) {
         // only there is enough space left in BB, we will send the real data to it.
         if(checkResult == 1) {
             MPI_Send(readBuffer, fileSize, MPI_CHAR, BBrank2send, 3, MPI_COMM_WORLD);
-            printf("Writer %d: send %u amount of data to BB\n", rank, fileSize);
+            printf("Writer %d: send %u amount of data to BB\n\n", rank, fileSize);
         }
         else {
-            printf("Writer %d: Not enough space left in BB -> write to PFS\n", rank);
+            printf("Writer %d: Not enough space left in BB -> write to PFS\n\n", rank);
 
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
@@ -220,17 +277,22 @@ int main(int argc, char** argv) {
             strcat(filename, ".out");
             fp = fopen(filename, "a+");
             if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n");
+                printf("cannot open file for write. Exit!\n\n");
                 return 1;
             }
             fwrite(readBuffer , 1 , fileSize , fp );
             fclose(fp);
         }
     }
-    MPI_Barrier(MPI_COMM_WORLD);
+    //MPI_Barrier(MPI_COMM_WORLD);
 
     timeEnd = MPI_Wtime();
-    printf( "Elapsed time for rank %d is %f\n", rank, timeEnd - timeStart );
+    if(rank % 8 == 0) {
+        printf( "$$ Elapsed time for BB rank %d is %f\n\n", rank, timeEnd - timeStart );
+    }
+    else {
+        printf( "$$ Elapsed time for writer rank %d is %f\n\n", rank, timeEnd - timeStart );
+    }
 
     free(readBuffer);
 
