@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <limits.h>
 
-unsigned long burstBufferMaxSize = 3221225472; // = 3*1024*1024*1024
+unsigned long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
 
 struct threadParams {
     int rank; // the rank of current process
@@ -46,6 +46,9 @@ int findSmallest(unsigned long* array, int size) {
 
 void* producer(void *ptr) {
     struct threadParams *tp = ptr;
+
+    printf("BB producer %d: just entered, nothing been done yet\n\n", tp->rank);
+
     MPI_Status status;
     int i;
 
@@ -102,6 +105,7 @@ void* consumer(void *ptr) {
     struct threadParams *tp = ptr;
 
     printf("BB consumer %d: just entered, nothing been done yet\n\n", tp->rank);
+
     while(1) {
         if(tp->burstBufferOffset[tp->rank / 8] > 0) {
             char filename[64];
@@ -151,53 +155,15 @@ int main(int argc, char** argv) {
     // Print off a hello world message
     printf("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
-    /* tried to create writer MPI group for the purpose of
-     * controlling when to terminate BB processes,
-     * but failed ...
-     *
-    // Get the group of processes in MPI_COMM_WORLD
-    MPI_Group world_group;
-    MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-
-    int n = rank / 8 * 7;
-    int* writerRanks = (int*) malloc(sizeof(int) * n);
-    int i,j;
-    for(i=0; i<rank; i++) {
-        if(i % 8 != 0) {
-            writerRanks[j++] = i;
-        }
-    }
-
-    // Construct a group containing all of the prime ranks in world_group
-    MPI_Group writer_group;
-    MPI_Group_incl(world_group, n, writerRanks, &writer_group);
-
-    // Create a new communicator based on the group
-    MPI_Comm writer_comm;
-    MPI_Comm_create_group(MPI_COMM_WORLD, writer_group, 0, &writer_comm);
-
-    int writer_rank = -1, writer_size = -1;
-    // If this rank isn't in the new communicator, it will be
-    // MPI_COMM_NULL. Using MPI_COMM_NULL for MPI_Comm_rank or
-    // MPI_Comm_size is erroneous
-    if (MPI_COMM_NULL != writer_comm) {
-        MPI_Comm_rank(writer_comm, &writer_rank);
-        MPI_Comm_size(writer_comm, &writer_size);
-    }
-
-    printf("WORLD RANK/SIZE: %d/%d \t PRIME RANK/SIZE: %d/%d\n", rank, size, writer_rank, writer_size);
-    *
-    */
-
     FILE *fp;
-    fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
+    fp = fopen("/home/dudh/fanxx234/CDBB/ICC2011.pdf", "r");
     if(fp == NULL) {
         printf("cannot open file for read. Exit!\n\n");
         return 1;
     }
 
     // read file to buffer
-    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
+    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/ICC2011.pdf");
     char *readBuffer;
     fseek(fp, 0, SEEK_END);
     rewind(fp);
@@ -215,9 +181,9 @@ int main(int argc, char** argv) {
 
     // BB rank
     if(rank % 8 == 0) {
-        // malloc 3GB as the local burst buffer
+        // malloc 3MB as the local burst buffer
         char *burstBuffer;
-        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 );
+        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024);
 
         unsigned long *burstBufferOffset;
         burstBufferOffset = (unsigned long*) malloc(sizeof(unsigned long) * size / 8);
