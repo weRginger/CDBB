@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <limits.h>
 
-#define debug 1
+#define debug 0
 
 #if debug
 #define dbg_print(format,args...)\
@@ -22,8 +22,8 @@
 #define dbg_print(format,args...)
 #endif
 
-unsigned long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
-//unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
+//unsigned long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
+unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
 
 struct threadParams {
     int rank; // the rank of current process
@@ -160,16 +160,16 @@ int main(int argc, char** argv) {
     dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
     FILE *fp;
-    fp = fopen("/home/dudh/fanxx234/CDBB/ICC2011.pdf", "r");
-    //fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
+    //fp = fopen("/home/dudh/fanxx234/CDBB/ICC2011.pdf", "r");
+    fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
     if(fp == NULL) {
         printf("cannot open file for read. Exit!\n\n");
         return 1;
     }
 
     // read file to buffer
-    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/ICC2011.pdf");
-    //unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
+    //unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/ICC2011.pdf");
+    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
     char *readBuffer;
     fseek(fp, 0, SEEK_END);
     rewind(fp);
@@ -181,10 +181,11 @@ int main(int argc, char** argv) {
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
     timeStart = MPI_Wtime();
 
     // BB monitor rank
@@ -258,8 +259,8 @@ int main(int argc, char** argv) {
         //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
 
         char *burstBuffer;
-        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024); // malloc 3MB as the local burst buffer
-        //burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 ); // malloc 3GB as the local burst buffer
+        //burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024); // malloc 3MB as the local burst buffer
+        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 ); // malloc 3GB as the local burst buffer
 
         pthread_t pro, con;
 

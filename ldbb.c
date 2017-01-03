@@ -21,7 +21,7 @@
 #define dbg_print(format,args...)
 #endif
 
-unsigned long burstBufferMaxSize = 3221225472; // = 3*1024*1024*1024
+unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
 
 unsigned long burstBufferOffset = 0;
 
@@ -141,6 +141,9 @@ int main(int argc, char** argv) {
 
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
+
+    MPI_Barrier(MPI_COMM_WORLD);
+
     timeStart = MPI_Wtime();
 
     // BB rank
@@ -202,7 +205,6 @@ int main(int argc, char** argv) {
     else {
         // do nothing
     }
-    //MPI_Barrier(MPI_COMM_WORLD);
 
     timeEnd = MPI_Wtime();
     if(rank % 8 == 0) {
