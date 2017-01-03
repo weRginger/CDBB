@@ -31,9 +31,7 @@ struct threadParams {
     char* burstBuffer;
     int size; // the size of one burst buffer
     int fileSize; // the size of incoming data
-    unsigned long* BBmonitor; // utilization of all burst buffers
-    int BBmonitorSize; // total number of BB in BBmonitor
-    MPI_Win* win; // window for locking purpose
+    unsigned long localBBmonitor;
 };
 
 unsigned long fsize(char* file)
@@ -49,7 +47,7 @@ int findSmallest(unsigned long* array, int size) {
     int i = 0;
     int ans;
     unsigned long smallest = INT_MAX;
-    for(i=0; i<size/8; i++) {
+    for(i=0; i<size; i++) {
         if(smallest > array[i]) {
             smallest = array[i];
             ans = i;
@@ -78,52 +76,16 @@ void* producer(void *ptr) {
     int i;
 
     while(1) {
-        unsigned long incomingDataSize; // receive from writer how much data it wants to write
+        // receive from writer how much data it wants to write
+        unsigned long incomingDataSize;
+        MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
 
-        MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
-        int localBB = tp->rank / 8; // the rank number of local burst buffer
+        // receive the real data from writer
+        MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 5, MPI_COMM_WORLD, &status);
 
-        int checkResult = 0; // denote whether any BB has space left; 1 means yes and 0 means no
+        tp->localBBmonitor += incomingDataSize;
 
-        MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, *(tp->win));
-        // local BB has enough space; let writer send the real data
-        if(tp->BBmonitor[localBB] + incomingDataSize < burstBufferMaxSize) {
-            tp->BBmonitor[localBB] += incomingDataSize;
-
-            checkResult = 1;
-            MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-            int BBrank2send = tp->rank / 8 * 8;
-            MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
-            MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, &status);
-
-            dbg_print("BB producer %d: burst buffer receive %u data from rank %d. BBmonitor is %u\n\n", tp->rank, incomingDataSize, status.MPI_SOURCE, tp->BBmonitor[localBB]);
-
-            goto UNLOCK;
-        }
-
-        int rankOfSmallestBurstBufferOffset = findSmallest(tp->BBmonitor, tp->totalRank);
-        // local BB is full, but remote BB has enough space;
-        // let writer know which remote BB to try
-        if(tp->BBmonitor[rankOfSmallestBurstBufferOffset] + incomingDataSize < burstBufferMaxSize) {
-            checkResult = 1;
-            MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-            int BBrank2send  = rankOfSmallestBurstBufferOffset * 8;
-            MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
-
-            dbg_print("BB producer %d: local burst buffer is full, but wrtier %d can try remote BB on rank %d\n\n", tp->rank, status.MPI_SOURCE, BBrank2send);
-        }
-        // all BBs do not have enough space; writer has to bypass BB and write to PFS
-        else {
-            checkResult = 0;
-            MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
-            int BBrank2send  = 233333;
-            MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
-            dbg_print("BB producer %d: all BBs are full for writier %d\n\n", tp->rank, status.MPI_SOURCE);
-        }
-UNLOCK:
-        // broadcast the changed BBmonitor to other ranks
-        MPI_Bcast(&(tp->BBmonitor[localBB]), 1, MPI_UNSIGNED_LONG, tp->rank, MPI_COMM_WORLD);
-        MPI_Win_unlock(0, *(tp->win));
+        dbg_print("BB producer %d: receive %d amount of data, localBBmonitor is %d\n\n", tp->rank, tp->fileSize, tp->localBBmonitor);
     }
     pthread_exit(0);
 }
@@ -133,10 +95,8 @@ void* consumer(void *ptr) {
 
     dbg_print("BB consumer %d: just entered, nothing been done yet\n\n", tp->rank);
 
-    int localBB = tp->rank / 8; // the rank number of local burst buffer
-
     while(1) {
-        if(tp->BBmonitor[localBB] > 0) {
+        if(tp->localBBmonitor > 0) {
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
             strcpy(filename, prefix);
@@ -153,12 +113,14 @@ void* consumer(void *ptr) {
             fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
             fclose(fp);
 
-            tp->BBmonitor[localBB] -= tp->fileSize;
+            tp->localBBmonitor -= tp->fileSize;
 
-            dbg_print("BB consumer %d: drained %d amount of data to PFS, burstBufferOffset is %d\n\n", tp->rank, tp->fileSize, tp->BBmonitor[localBB]);
+            int BBmonitorRank = 0;
+
+            MPI_Send(&tp->localBBmonitor, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
+
+            dbg_print("BB consumer %d: drained %d amount of data to PFS, localBBmonitor is %d\n\n", tp->rank, tp->fileSize, tp->localBBmonitor);
         }
-        // broadcast the changed BBmonitor to other ranks
-        MPI_Bcast(&(tp->BBmonitor[localBB]), 1, MPI_UNSIGNED_LONG, tp->rank, MPI_COMM_WORLD);
     }
     pthread_exit(0);
 }
@@ -181,6 +143,18 @@ int main(int argc, char** argv) {
     char processor_name[MPI_MAX_PROCESSOR_NAME];
     int name_len;
     MPI_Get_processor_name(processor_name, &name_len);
+
+    MPI_Status status;
+
+    // create window to manage BB monitor
+    MPI_Win win;
+    int BBmonitorSize = size / 8;
+    unsigned long* BBmonitor = (unsigned long*)xMPI_Alloc_mem(BBmonitorSize * sizeof(unsigned long));
+    int i;
+    for(i=0; i<BBmonitorSize; i++) {
+        BBmonitor[i] = 0;
+    }
+    MPI_Win_create(BBmonitor, sizeof(unsigned long) * BBmonitorSize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
 
     // Print off a hello world message
     dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
@@ -207,38 +181,85 @@ int main(int argc, char** argv) {
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
 
-    MPI_Win win; // window to manage BB monitor
-    int BBmonitorSize = size / 8;
-    unsigned long* BBmonitor = (unsigned long*)xMPI_Alloc_mem(BBmonitorSize * sizeof(unsigned long));
-
-    int i;
-    for(i=0; i<BBmonitorSize; i++) {
-        BBmonitor[i] = 0;
-    }
-
-    MPI_Win_create(BBmonitor, sizeof(unsigned long) * BBmonitorSize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+    MPI_Barrier(MPI_COMM_WORLD);
 
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
     timeStart = MPI_Wtime();
 
+    // BB monitor rank
+    if(rank == 0) {
+        while(1) {
+            int senderID; // who is sending me information? 0 means from BB; 1 means from writer
+            MPI_Recv(&senderID, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+
+            // talking with BB
+            if(senderID == 0) {
+                unsigned long newBBmonitor;
+                MPI_Recv(&newBBmonitor, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 6, MPI_COMM_WORLD, &status);
+                BBmonitor[status.MPI_SOURCE / 8 + 7] = newBBmonitor;
+            }
+            // talking with writer
+            if(senderID == 1) {
+                // receive from writer how much data it wants to write
+                unsigned long incomingDataSize;
+                MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
+
+                // calculate localBB offset in BBmonitor
+                int localBB = status.MPI_SOURCE / 8;
+
+                int checkResult = 0; // denote whether any BB has space left; 1 means yes and 0 means no
+
+                MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, win);
+
+                int rankOfSmallestBurstBufferOffset = findSmallest(BBmonitor, BBmonitorSize);
+
+                // local BB has enough space; let writer send the real data
+                if(BBmonitor[localBB] + incomingDataSize < burstBufferMaxSize) {
+                    BBmonitor[localBB] += incomingDataSize;
+
+                    checkResult = 1;
+                    MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
+                    int BBrank2send = localBB * 8 + 7;
+                    MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
+
+                    dbg_print("BB monitor: let writer %d send its data to it local BB on rank %d\n\n", status.MPI_SOURCE, BBrank2send);
+                }
+                // local BB is full, but remote BB has enough space;
+                // let writer know which remote BB to try
+                else if(BBmonitor[rankOfSmallestBurstBufferOffset] + incomingDataSize < burstBufferMaxSize) {
+                    BBmonitor[rankOfSmallestBurstBufferOffset] += incomingDataSize;
+
+                    checkResult = 1;
+                    MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
+                    int BBrank2send  = rankOfSmallestBurstBufferOffset * 8 + 7;
+                    MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
+
+                    dbg_print("BB monitor: local BB is full, let writer %d send its data to it remote BB on rank %d\n\n", status.MPI_SOURCE, BBrank2send);
+                }
+                // all BBs do not have enough space; writer has to bypass BB and write to PFS
+                else {
+                    checkResult = 0;
+                    MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
+                    int BBrank2send  = 666;
+                    MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
+                    dbg_print("BB monitor: all BBs are full for writer %d\n\n", status.MPI_SOURCE);
+                }
+                MPI_Win_unlock(0, win);
+            }
+        }
+        MPI_Win_free(&win);
+        MPI_Free_mem(BBmonitor);
+    }
     // BB rank
-    if(rank % 8 == 0) {
+    if(rank % 8 == 7) {
+        // writer processes do not expose BBmoniror memory in the window
+        // [!!!] Note that if not do this, the whole program will hang
+        //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+
         char *burstBuffer;
         burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024); // malloc 3MB as the local burst buffer
         //burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 ); // malloc 3GB as the local burst buffer
-
-        /*
-        int BBmonitorSize = size / 8;
-        unsigned long* BBmonitor = (unsigned long*)xMPI_Alloc_mem(BBmonitorSize * sizeof(unsigned long));
-
-        int i;
-        for(i=0; i<BBmonitorSize; i++) {
-            BBmonitor[i] = 0;
-        }
-
-        MPI_Win_create(BBmonitor, sizeof(unsigned long) * BBmonitorSize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-        */
 
         pthread_t pro, con;
 
@@ -248,9 +269,7 @@ int main(int argc, char** argv) {
         tp.burstBuffer = burstBuffer;
         tp.size = burstBufferMaxSize;
         tp.fileSize = fileSize;
-        tp.BBmonitor = BBmonitor;
-        tp.BBmonitorSize = BBmonitorSize;
-        tp.win = &win;
+        tp.localBBmonitor = 0;
 
         // Create the threads
         pthread_create(&con, NULL, consumer, &tp);
@@ -263,8 +282,6 @@ int main(int argc, char** argv) {
         pthread_join(con, NULL);
 
         free(burstBuffer);
-        MPI_Win_free(&win);
-        MPI_Free_mem(BBmonitor);
     }
     // writer rank, first half ranks will write
     else if (rank < size/2) {
@@ -276,30 +293,33 @@ int main(int argc, char** argv) {
         // if local BB is not full, send real data to local BB
         // if local BB is full but remote BB is not, send to remote BB
         // else send to PFS directly
-        int localBBrank = (rank/8)*8; // try local BB first;
+        int BBmonitorRank = 0; // BB monitor rank
 
-TRYREMOTEBB:
-        MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, localBBrank, 0, MPI_COMM_WORLD);
-        int checkResult; // 1 means space left in at least one BB, may not be local BB
-        MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        int returnedBBrank2send; // the returned BB rank number could be local BB or a remote BB
-        MPI_Recv(&returnedBBrank2send, 1, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        // tell BB monitor rank I am a writer
+        int senderID = 1;
+        MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
 
-        if(checkResult == 1) { // there is enough space left in local BB or remote BB
-            if(localBBrank == returnedBBrank2send) { // that BB is local BB so we can send to it
-                MPI_Send(readBuffer, fileSize, MPI_CHAR, localBBrank, 3, MPI_COMM_WORLD);
-                dbg_print("Writer %d: send %u amount of data to local BB on rank %d\n\n", rank, fileSize, localBBrank);
-            }
-            // that BB is a remote BB, let go back to re-try
-            else {
-                dbg_print("Writer %d: local BB on rank %d is full, let's try remote BB on rank %d\n\n", rank, localBBrank, returnedBBrank2send);
-                localBBrank = returnedBBrank2send;
-                goto TRYREMOTEBB;
-            }
+        // tell BB monitor how much data I want to write
+        MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
+
+        // 1 means space left in at least one BB, may not be local BB
+        int checkResult;
+        MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // the returned BB rank number could be local BB or a remote BB
+        int returnedBBrank2send;
+        MPI_Recv(&returnedBBrank2send, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+        // there is enough space left in local BB or remote BB
+        if(checkResult == 1) {
+            // tell BB how much data I want to write
+            MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
+
+            // send to real data
+            MPI_Send(readBuffer, fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
+            dbg_print("Writer %d: send %u amount of data to BB on rank %d\n\n", rank, fileSize, returnedBBrank2send);
         }
         else {
-            dbg_print("Writer %d: Not enough space left in BB -> write to PFS\n\n", rank);
-
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
             strcpy(filename, prefix);
@@ -314,6 +334,8 @@ TRYREMOTEBB:
             }
             fwrite(readBuffer , 1 , fileSize , fp );
             fclose(fp);
+
+            dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n\n", rank, fileSize);
         }
     }
     // the rest half of ranks do nothing
@@ -322,10 +344,12 @@ TRYREMOTEBB:
         // [!!!] Note that if not do this, the whole program will hang
         //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
     }
-    //MPI_Barrier(MPI_COMM_WORLD);
 
     timeEnd = MPI_Wtime();
-    if(rank % 8 == 0) {
+    if(rank == 0) {
+        printf( "$$ Elapsed time for BB monitor rank %d is %f\n\n", rank, timeEnd - timeStart );
+    }
+    else if(rank % 8 == 7) {
         printf( "$$ Elapsed time for BB rank %d is %f\n\n", rank, timeEnd - timeStart );
     }
     else {
