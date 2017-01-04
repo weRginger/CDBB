@@ -53,7 +53,7 @@ int findSmallest(unsigned long* array, int size) {
             ans = i;
         }
     }
-    dbg_print("Rank of smallest burst buffer offset is %d, offset is %u\n\n", ans, smallest);
+    dbg_print("Rank of smallest burst buffer offset is %d, offset is %u\n", ans, smallest);
     return ans;
 }
 
@@ -70,7 +70,7 @@ void* xMPI_Alloc_mem(size_t nbytes) {
 void* producer(void *ptr) {
     struct threadParams *tp = ptr;
 
-    dbg_print("BB producer %d: just entered, nothing been done yet\n\n", tp->rank);
+    dbg_print("BB producer %d: just entered, nothing been done yet\n", tp->rank);
 
     MPI_Status status;
     int i;
@@ -85,7 +85,7 @@ void* producer(void *ptr) {
 
         tp->localBBmonitor += incomingDataSize;
 
-        dbg_print("BB producer %d: receive %d amount of data, localBBmonitor is %d\n\n", tp->rank, tp->fileSize, tp->localBBmonitor);
+        dbg_print("BB producer %d: receive %d amount of data, localBBmonitor is %d\n", tp->rank, tp->fileSize, tp->localBBmonitor);
     }
     pthread_exit(0);
 }
@@ -93,7 +93,7 @@ void* producer(void *ptr) {
 void* consumer(void *ptr) {
     struct threadParams *tp = ptr;
 
-    dbg_print("BB consumer %d: just entered, nothing been done yet\n\n", tp->rank);
+    dbg_print("BB consumer %d: just entered, nothing been done yet\n", tp->rank);
 
     while(1) {
         if(tp->localBBmonitor > 0) {
@@ -107,7 +107,7 @@ void* consumer(void *ptr) {
             FILE *fp;
             fp = fopen(filename, "a+");
             if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n\n");
+                printf("cannot open file for write. Exit!\n");
                 return;
             }
             fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
@@ -119,7 +119,7 @@ void* consumer(void *ptr) {
 
             MPI_Send(&tp->localBBmonitor, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
 
-            dbg_print("BB consumer %d: drained %d amount of data to PFS, localBBmonitor is %d\n\n", tp->rank, tp->fileSize, tp->localBBmonitor);
+            dbg_print("BB consumer %d: drained %d amount of data to PFS, localBBmonitor is %d\n", tp->rank, tp->fileSize, tp->localBBmonitor);
         }
     }
     pthread_exit(0);
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
     //fp = fopen("/home/dudh/fanxx234/CDBB/ICC2011.pdf", "r");
     fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
     if(fp == NULL) {
-        printf("cannot open file for read. Exit!\n\n");
+        printf("cannot open file for read. Exit!\n");
         return 1;
     }
 
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
     rewind(fp);
     readBuffer = (char*) malloc(sizeof(char) * fileSize);
     if (readBuffer == 0) {
-        printf("ERROR: Out of memory when malloc readBuffer\n\n");
+        printf("ERROR: Out of memory when malloc readBuffer\n");
         return 1;
     }
     fread(readBuffer, 1, fileSize, fp);
@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
                     int BBrank2send = localBB * 8 + 7;
                     MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
 
-                    dbg_print("BB monitor: let writer %d send its data to it local BB on rank %d\n\n", status.MPI_SOURCE, BBrank2send);
+                    dbg_print("BB monitor: let writer %d send its data to it local BB on rank %d\n", status.MPI_SOURCE, BBrank2send);
                 }
                 // local BB is full, but remote BB has enough space;
                 // let writer know which remote BB to try
@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
                     int BBrank2send  = rankOfSmallestBurstBufferOffset * 8 + 7;
                     MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
 
-                    dbg_print("BB monitor: local BB is full, let writer %d send its data to it remote BB on rank %d\n\n", status.MPI_SOURCE, BBrank2send);
+                    dbg_print("BB monitor: local BB is full, let writer %d send its data to it remote BB on rank %d\n", status.MPI_SOURCE, BBrank2send);
                 }
                 // all BBs do not have enough space; writer has to bypass BB and write to PFS
                 else {
@@ -244,7 +244,7 @@ int main(int argc, char** argv) {
                     MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 2, MPI_COMM_WORLD);
                     int BBrank2send  = 666;
                     MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
-                    dbg_print("BB monitor: all BBs are full for writer %d\n\n", status.MPI_SOURCE);
+                    dbg_print("BB monitor: all BBs are full for writer %d\n", status.MPI_SOURCE);
                 }
                 MPI_Win_unlock(0, win);
             }
@@ -318,7 +318,7 @@ int main(int argc, char** argv) {
 
             // send to real data
             MPI_Send(readBuffer, fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
-            dbg_print("Writer %d: send %u amount of data to BB on rank %d\n\n", rank, fileSize, returnedBBrank2send);
+            dbg_print("Writer %d: send %u amount of data to BB on rank %d\n", rank, fileSize, returnedBBrank2send);
         }
         else {
             char filename[64];
@@ -330,13 +330,13 @@ int main(int argc, char** argv) {
             strcat(filename, ".out");
             fp = fopen(filename, "a+");
             if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n\n");
+                printf("cannot open file for write. Exit!\n");
                 return 1;
             }
             fwrite(readBuffer , 1 , fileSize , fp );
             fclose(fp);
 
-            dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n\n", rank, fileSize);
+            dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n", rank, fileSize);
         }
     }
     // the rest half of ranks do nothing
@@ -348,13 +348,13 @@ int main(int argc, char** argv) {
 
     timeEnd = MPI_Wtime();
     if(rank == 0) {
-        printf( "$$ Elapsed time for BB monitor rank %d is %f\n\n", rank, timeEnd - timeStart );
+        printf( "$$ Elapsed time for BB monitor rank %d is %f\n", rank, timeEnd - timeStart );
     }
     else if(rank % 8 == 7) {
-        printf( "$$ Elapsed time for BB rank %d is %f\n\n", rank, timeEnd - timeStart );
+        printf( "$$ Elapsed time for BB rank %d is %f\n", rank, timeEnd - timeStart );
     }
     else {
-        printf( "$$ Elapsed time for writer rank %d is %f\n\n", rank, timeEnd - timeStart );
+        printf( "$$ Elapsed time for writer rank %d is %f\n", rank, timeEnd - timeStart );
     }
 
     free(readBuffer);
