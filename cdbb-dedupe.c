@@ -13,7 +13,7 @@
 #include <limits.h>
 #include <openssl/sha.h>
 
-#define debug 1
+#define debug 0
 
 #if debug
 #define dbg_print(format,args...)\
@@ -442,7 +442,7 @@ int main(int argc, char** argv) {
 // [IMPORTANT] set comsumer drain rate, corresponding to dedupe
 // [IMPORTANT] set comsumer drain rate, corresponding to dedupe
 // [IMPORTANT] set comsumer drain rate, corresponding to dedupe
-        tp.fileSize = fileSize/10;
+        tp.fileSize = fileSize/10 * 7;
         tp.localBBmonitor = 0;
         tp.lock_localBBmonitor = &lock_localBBmonitor;
 
@@ -493,7 +493,7 @@ int main(int argc, char** argv) {
 // [IMPORTANT] set duplication rate
 // [IMPORTANT] set duplication rate
 // [IMPORTANT] set duplication rate
-        fileSize = fileSize/10;
+        fileSize = fileSize/10 * 7;
 
         //
         //
