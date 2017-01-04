@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <limits.h>
 
-#define debug 0
+#define debug 1
 
 #if debug
 #define dbg_print(format,args...)\
