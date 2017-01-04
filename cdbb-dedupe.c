@@ -1,6 +1,8 @@
 // Author: Ziqi Fan
-// cdbb.c: Collaborative Distributed Burst Buffer
+// cdbb-dedupe.c: Collaborative Distributed Burst Buffer with Data Deduplication
 //
+
+#define _XOPEN_SOURCE 500 /* Enable certain library functions (strdup) on linux.  See feature_test_macros(7) */
 
 #include <mpi.h>
 #include <stdio.h>
@@ -9,8 +11,9 @@
 #include <time.h>
 #include <pthread.h>
 #include <limits.h>
+#include <openssl/sha.h>
 
-#define debug 0
+#define debug 1
 
 #if debug
 #define dbg_print(format,args...)\
@@ -22,6 +25,8 @@
 #define dbg_print(format,args...)
 #endif
 
+#define CHUNK_SIZE 32*1024 // dedupe use fixed chunking; size is 32 KB
+
 //unsigned long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
 unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
 
@@ -30,7 +35,7 @@ struct threadParams {
     int totalRank; // the total number of ranks (processes)
     char* burstBuffer;
     int size; // the size of one burst buffer
-    unsigned long fileSize; // the size of incoming data
+    unsigned long fileSize; // the size of incoming data;
     unsigned long localBBmonitor;
     pthread_mutex_t* lock_localBBmonitor; // lock for localBBmonitor
 };
@@ -68,6 +73,161 @@ void* xMPI_Alloc_mem(size_t nbytes) {
     return p;
 }
 
+pthread_mutex_t lock;
+
+// start: hash table implementation
+//
+//
+struct entry_s {
+    char *key;
+    char *value;
+    struct entry_s *next;
+};
+
+typedef struct entry_s entry_t;
+
+struct hashtable_s {
+    int size;
+    struct entry_s **table;
+};
+
+typedef struct hashtable_s hashtable_t;
+
+
+/* Create a new hashtable. */
+hashtable_t *ht_create( int size ) {
+
+    hashtable_t *hashtable = NULL;
+    int i;
+
+    if( size < 1 ) return NULL;
+
+    /* Allocate the table itself. */
+    if( ( hashtable = malloc( sizeof( hashtable_t ) ) ) == NULL ) {
+        return NULL;
+    }
+
+    /* Allocate pointers to the head nodes. */
+    if( ( hashtable->table = malloc( sizeof( entry_t * ) * size ) ) == NULL ) {
+        return NULL;
+    }
+    for( i = 0; i < size; i++ ) {
+        hashtable->table[i] = NULL;
+    }
+
+    hashtable->size = size;
+
+    return hashtable;
+}
+
+/* Hash a string for a particular hash table. */
+int ht_hash( hashtable_t *hashtable, char *key ) {
+
+    unsigned long int hashval;
+    int i = 0;
+
+    /* Convert our string to an integer */
+    while( hashval < ULONG_MAX && i < strlen( key ) ) {
+        hashval = hashval << 8;
+        hashval += key[ i ];
+        i++;
+    }
+
+    return hashval % hashtable->size;
+}
+
+/* Create a key-value pair. */
+entry_t *ht_newpair( char *key, char *value ) {
+    entry_t *newpair;
+
+    if( ( newpair = malloc( sizeof( entry_t ) ) ) == NULL ) {
+        return NULL;
+    }
+
+    if( ( newpair->key = strdup( key ) ) == NULL ) {
+        return NULL;
+    }
+
+    if( ( newpair->value = strdup( value ) ) == NULL ) {
+        return NULL;
+    }
+
+    newpair->next = NULL;
+
+    return newpair;
+}
+
+/* Insert a key-value pair into a hash table. */
+void ht_set( hashtable_t *hashtable, char *key, char *value ) {
+    int bin = 0;
+    entry_t *newpair = NULL;
+    entry_t *next = NULL;
+    entry_t *last = NULL;
+
+    bin = ht_hash( hashtable, key );
+
+    next = hashtable->table[ bin ];
+
+    while( next != NULL && next->key != NULL && strcmp( key, next->key ) > 0 ) {
+        last = next;
+        next = next->next;
+    }
+
+    /* There's already a pair.  Let's replace that string. */
+    if( next != NULL && next->key != NULL && strcmp( key, next->key ) == 0 ) {
+
+        free( next->value );
+        next->value = strdup( value );
+
+        /* Nope, could't find it.  Time to grow a pair. */
+    } else {
+        newpair = ht_newpair( key, value );
+
+        /* We're at the start of the linked list in this bin. */
+        if( next == hashtable->table[ bin ] ) {
+            newpair->next = next;
+            hashtable->table[ bin ] = newpair;
+
+            /* We're at the end of the linked list in this bin. */
+        } else if ( next == NULL ) {
+            last->next = newpair;
+
+            /* We're in the middle of the list. */
+        } else  {
+            newpair->next = next;
+            last->next = newpair;
+        }
+    }
+}
+
+/* Retrieve a key-value pair from a hash table. */
+char *ht_get( hashtable_t *hashtable, char *key ) {
+    int bin = 0;
+    entry_t *pair;
+
+    bin = ht_hash( hashtable, key );
+
+    /* Step through the bin, looking for our value. */
+    pair = hashtable->table[ bin ];
+    while( pair != NULL && pair->key != NULL && strcmp( key, pair->key ) > 0 ) {
+        pair = pair->next;
+    }
+
+    char *notFound = "Key not found!";
+
+    /* Did we actually find anything? */
+    if( pair == NULL || pair->key == NULL || strcmp( key, pair->key ) != 0 ) {
+        return notFound;
+
+    } else {
+        return pair->value;
+    }
+
+}
+//
+//
+// end: hash table implementation
+
 void* producer(void *ptr) {
     struct threadParams *tp = ptr;
 
@@ -90,7 +250,7 @@ void* producer(void *ptr) {
 
         pthread_mutex_unlock(tp->lock_localBBmonitor);
 
-        dbg_print("BB producer %d: receive %lu amount of data, localBBmonitor is %lu\n", tp->rank, incomingDataSize, tp->localBBmonitor);
+        dbg_print("BB producer %d: receive %lu amount of data, localBBmonitor is %lu\n", tp->rank, tp->fileSize, tp->localBBmonitor);
     }
     pthread_exit(0);
 }
@@ -117,8 +277,7 @@ void* consumer(void *ptr) {
                 printf("cannot open file for write. Exit!\n");
                 return;
             }
-
-            fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
+            fwrite(tp->burstBuffer, 1, CHUNK_SIZE, fp); // each time write one chunk to PFS
             fclose(fp);
 
             tp->localBBmonitor -= tp->fileSize;
@@ -190,6 +349,9 @@ int main(int argc, char** argv) {
     }
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
+
+    // initiate hash table for dedupe
+    hashtable_t *hashtable = ht_create(65536);
 
     // using MPI timer to get the start and end time
     double timeStart, timeEnd;
@@ -264,10 +426,6 @@ int main(int argc, char** argv) {
     }
     // BB rank
     if(rank % 8 == 7) {
-        // writer processes do not expose BBmoniror memory in the window
-        // [!!!] Note that if not do this, the whole program will hang
-        //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-
         char *burstBuffer;
         //burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024); // malloc 3MB as the local burst buffer
         burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 ); // malloc 3GB as the local burst buffer
@@ -281,7 +439,10 @@ int main(int argc, char** argv) {
         tp.totalRank = size;
         tp.burstBuffer = burstBuffer;
         tp.size = burstBufferMaxSize;
-        tp.fileSize = fileSize;
+// [IMPORTANT] set comsumer drain rate, corresponding to dedupe
+// [IMPORTANT] set comsumer drain rate, corresponding to dedupe
+// [IMPORTANT] set comsumer drain rate, corresponding to dedupe
+        tp.fileSize = fileSize/10;
         tp.localBBmonitor = 0;
         tp.lock_localBBmonitor = &lock_localBBmonitor;
 
@@ -299,14 +460,45 @@ int main(int argc, char** argv) {
     }
     // writer rank, first half ranks will write
     else if (rank < size/2) {
-        // writer processes do not expose BBmoniror memory in the window
-        // [!!!] Note that if not do this, the whole program will hang
-        //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+        // start dedupe process
+        //
+        //
+        int i = 0;
+        unsigned char temp[SHA_DIGEST_LENGTH];
+        char buf[SHA_DIGEST_LENGTH*2];
+        memset(buf, 0x0, SHA_DIGEST_LENGTH*2);
+        memset(temp, 0x0, SHA_DIGEST_LENGTH);
+        char chunk[CHUNK_SIZE];
+        memset(chunk, 0x0, CHUNK_SIZE);
+        int offset=0;
+        int num=0;
+        while(offset<fileSize) {
+            SHA1((unsigned char *)readBuffer+offset, CHUNK_SIZE, temp);
+            for (i=0; i < SHA_DIGEST_LENGTH; i++) {
+                sprintf((char*)&(buf[i*2]), "%02x", temp[i]);
+            }
+            //printf("num %d SHA1 is %s\n", num++, buf);
 
-        // before sending the real data, send fileSize to local BB to check global BB status
-        // if local BB is not full, send real data to local BB
-        // if local BB is full but remote BB is not, send to remote BB
-        // else send to PFS directly
+            pthread_mutex_lock(&lock);
+            char* val = ht_get(hashtable, buf);
+            //printf( "ht_get(%s): %s\n", buf, val);
+            if(strcmp(val, "Key not found!") == 0) {
+                ht_set(hashtable, buf, "duplicate");
+            }
+            pthread_mutex_unlock(&lock);
+
+            offset += CHUNK_SIZE;
+        }
+
+// [IMPORTANT] set duplication rate
+// [IMPORTANT] set duplication rate
+// [IMPORTANT] set duplication rate
+        fileSize = fileSize/10;
+
+        //
+        //
+        // end of dedupe process
+
         int BBmonitorRank = 0; // BB monitor rank
 
         // tell BB monitor rank I am a writer
@@ -349,7 +541,7 @@ int main(int argc, char** argv) {
             fwrite(readBuffer , 1 , fileSize , fp );
             fclose(fp);
 
-            dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n", rank, fileSize);
+            dbg_print("Writer %d: Not enough space left in any BBs -> write %lu to PFS\n", rank, fileSize);
         }
     }
     // the rest half of ranks do nothing

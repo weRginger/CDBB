@@ -1,10 +1,13 @@
-EXECS=cdbb ldbb nobb dedupe
+EXECS=cdbb cdbb-dedupe ldbb nobb dedupe
 MPICC=mpicc
 
 all: ${EXECS}
 
 cdbb: cdbb.c
 	${MPICC} -o cdbb cdbb.c
+ 
+cdbb-dedupe: cdbb-dedupe.c
+	${MPICC} -o cdbb-dedupe -lssl cdbb-dedupe.c
  
 dedupe: dedupe.c
 	${MPICC} -o dedupe -lssl dedupe.c

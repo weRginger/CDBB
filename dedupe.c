@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
         int i = 0;
         //unsigned long offset = 0;
         for(i = 0; i < 7; i++) {
-            //MPI_Recv(burstBuffer, fileSize/10, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+            MPI_Recv(burstBuffer, fileSize/10, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             //MPI_Recv(burstBuffer+offset, fileSize, MPI_CHAR, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
             printf("burst buffer receive from rank %d\n", status.MPI_SOURCE);
             //offset += fileSize;
@@ -258,7 +258,9 @@ int main(int argc, char** argv) {
     else {
         printf("$This is a writer process.\n");
 
-        // sha1
+        // start dedupe process
+        //
+        //
         int i = 0;
         unsigned char temp[SHA_DIGEST_LENGTH];
         char buf[SHA_DIGEST_LENGTH*2];
@@ -279,16 +281,18 @@ int main(int argc, char** argv) {
             char* val = ht_get(hashtable, buf);
             //printf( "ht_get(%s): %s\n", buf, val);
             if(strcmp(val, "Key not found!") == 0) {
-                //printf( "debug: line %d\n", __LINE__ );
                 ht_set(hashtable, buf, "duplicate");
             }
             pthread_mutex_unlock(&lock);
 
             offset += CHUNK_SIZE;
         }
+        //
+        //
+        // end of dedupe process
 
         // send
-        //MPI_Send(readBuffer, fileSize/10, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
+        MPI_Send(readBuffer, fileSize/10, MPI_CHAR, (rank/8)*8, 0, MPI_COMM_WORLD);
     }
     MPI_Barrier(MPI_COMM_WORLD);
 

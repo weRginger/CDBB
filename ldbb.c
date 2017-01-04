@@ -9,7 +9,7 @@
 #include <time.h>
 #include <pthread.h>
 
-#define debug 1
+#define debug 0
 
 #if debug
 #define dbg_print(format,args...)\
@@ -25,11 +25,13 @@ unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
 
 unsigned long burstBufferOffset = 0;
 
+pthread_mutex_t lock_burstBufferOffset; // lock for burstBufferOffset
+
 struct threadParams {
     int rank;
     char* burstBuffer;
     int size;
-    int fileSize;
+    unsigned long fileSize;
 };
 
 unsigned long fsize(char* file)
@@ -60,10 +62,16 @@ void* producer(void *ptr) {
         // BB has enough space; let writer send the real data
         else {
             checkResult = 1;
+
+            pthread_mutex_lock(&lock_burstBufferOffset);
+
             MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
             MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
             burstBufferOffset += incomingDataSize;
-            dbg_print("BB producer %d: burst buffer receive %u data from rank %d. burstBufferOffset is %u\n", tp->rank, incomingDataSize, status.MPI_SOURCE, burstBufferOffset);
+
+            pthread_mutex_unlock(&lock_burstBufferOffset);
+
+            dbg_print("BB producer %d: burst buffer receive %lu data from rank %d. burstBufferOffset is %lu\n", tp->rank, incomingDataSize, status.MPI_SOURCE, burstBufferOffset);
         }
     }
     pthread_exit(0);
@@ -76,6 +84,8 @@ void* consumer(void *ptr) {
     dbg_print("BB consumer %d: just entered, nothing been done yet\n", tp->rank);
     while(1) {
         if(burstBufferOffset > 0) {
+            pthread_mutex_lock(&lock_burstBufferOffset);
+
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
             strcpy(filename, prefix);
@@ -93,7 +103,10 @@ void* consumer(void *ptr) {
             fclose(fp);
 
             burstBufferOffset -= tp->fileSize;
-            dbg_print("BB consumer %d: drained %d amount of data to PFS, burstBufferOffset is %d\n", tp->rank, tp->fileSize, burstBufferOffset);
+
+            pthread_mutex_unlock(&lock_burstBufferOffset);
+
+            dbg_print("BB consumer %d: drained %lu amount of data to PFS, burstBufferOffset is %lu\n", tp->rank, tp->fileSize, burstBufferOffset);
         }
     }
     pthread_exit(0);
