@@ -83,7 +83,7 @@ void* producer(void *ptr) {
 
         // receive from writer how much data it wants to write
         long long incomingDataSize;
-        MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
+        MPI_Recv(&incomingDataSize, 1, MPI_LONG_LONG, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
 
         // receive the real data from writer
         MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 5, MPI_COMM_WORLD, &status);
@@ -125,7 +125,11 @@ void* consumer(void *ptr) {
 
             int BBmonitorRank = 0;
 
-            MPI_Send(tp->localBBmonitor, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
+            // tell BB monitor rank I am a BB rank
+            int senderID = 0;
+            MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
+
+            MPI_Send(tp->localBBmonitor, 1, MPI_LONG_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
 
             dbg_print("BB consumer %d: drained %lld amount of data to PFS, localBBmonitor is %lld\n", tp->rank, tp->fileSize, *tp->localBBmonitor);
         }
@@ -151,7 +155,7 @@ void* writer(void *ptr) {
     MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
 
     // tell BB monitor how much data I want to write
-    MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
+    MPI_Send(&tp->fileSize, 1, MPI_LONG_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
 
     // 1 means space left in at least one BB, may not be local BB
     int checkResult;
@@ -166,7 +170,7 @@ void* writer(void *ptr) {
     // there is enough space left in local BB or remote BB
     if(checkResult == 1) {
         // tell BB how much data I want to write
-        MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
+        MPI_Send(&tp->fileSize, 1, MPI_LONG_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
 
         // send real data
         MPI_Send(tp->readBuffer, tp->fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
@@ -266,17 +270,20 @@ int main(int argc, char** argv) {
             int senderID; // who is sending me information? 0 means from BB; 1 means from writer
             MPI_Recv(&senderID, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
 
+            dbg_print("senderID is %d\n", senderID);
+
             // talking with BB
             if(senderID == 0) {
                 long long newBBmonitor;
-                MPI_Recv(&newBBmonitor, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 6, MPI_COMM_WORLD, &status);
+                MPI_Recv(&newBBmonitor, 1, MPI_LONG_LONG, MPI_ANY_SOURCE, 6, MPI_COMM_WORLD, &status);
                 BBmonitor[status.MPI_SOURCE / 8 + 7] = newBBmonitor;
+                dbg_print("\n");
             }
             // talking with writer
             if(senderID == 1) {
                 // receive from writer how much data it wants to write
                 long long incomingDataSize;
-                MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
+                MPI_Recv(&incomingDataSize, 1, MPI_LONG_LONG, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
 
                 // calculate localBB offset in BBmonitor
                 int localBB = status.MPI_SOURCE / 8;
