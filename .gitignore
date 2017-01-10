@@ -2,6 +2,7 @@ cdbb
 nobb
 ldbb
 dedupe
+cdbb-dedupe
 *.e
 *.vmdk
 

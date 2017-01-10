@@ -10,7 +10,7 @@
 #include <pthread.h>
 #include <limits.h>
 
-#define debug 0
+#define debug 1
 
 #if debug
 #define dbg_print(format,args...)\
@@ -31,8 +31,10 @@ struct threadParams {
     char* burstBuffer;
     int size; // the size of one burst buffer
     unsigned long fileSize; // the size of incoming data
+    char* readBuffer; // checkpointing data buffer to write
     unsigned long localBBmonitor;
     pthread_mutex_t* lock_localBBmonitor; // lock for localBBmonitor
+    int ckptRun; // keep track how many ckpts have been performed
 };
 
 unsigned long fsize(char* file)
@@ -135,6 +137,67 @@ void* consumer(void *ptr) {
     pthread_exit(0);
 }
 
+void* writer(void *ptr) {
+    // using MPI timer to get the start and end time
+    double timeStart, timeEnd;
+    timeStart = MPI_Wtime();
+
+    struct threadParams *tp = ptr;
+
+    // before sending the real data, send fileSize to local BB to check global BB status
+    // if local BB is not full, send real data to local BB
+    // if local BB is full but remote BB is not, send to remote BB
+    // else send to PFS directly
+    int BBmonitorRank = 0; // BB monitor rank
+
+    // tell BB monitor rank I am a writer
+    int senderID = 1;
+    MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
+
+    // tell BB monitor how much data I want to write
+    MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
+
+    // 1 means space left in at least one BB, may not be local BB
+    int checkResult;
+    MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // the returned BB rank number could be local BB or a remote BB
+    int returnedBBrank2send;
+    MPI_Recv(&returnedBBrank2send, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
+    // there is enough space left in local BB or remote BB
+    if(checkResult == 1) {
+        // tell BB how much data I want to write
+        MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
+
+        // send real data
+        MPI_Send(tp->readBuffer, tp->fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
+        dbg_print("Writer %d: send %lu amount of data to BB on rank %d\n", tp->rank, tp->fileSize, returnedBBrank2send);
+    }
+    else {
+        char filename[64];
+        char *prefix="/scratch.global/fan/rank";
+        strcpy(filename, prefix);
+        char buf[sizeof(int)+1];
+        snprintf(buf, sizeof buf, "%d", tp->rank);
+        strcat(filename, buf);
+        strcat(filename, ".out");
+        FILE *fp;
+        fp = fopen(filename, "a+");
+        if(fp == NULL) {
+            printf("cannot open file for write. Exit!\n");
+            return;
+        }
+        fwrite(tp->readBuffer , 1 , tp->fileSize , fp );
+        fclose(fp);
+
+        dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n", tp->rank, tp->fileSize);
+    }
+
+    timeEnd = MPI_Wtime();
+    printf( "$$ CKPT Run %d: Elapsed time for writer rank %d is %f, timeStart %f, timeEnd %f\n", tp->ckptRun, tp->rank, timeEnd - timeStart, timeStart, timeEnd);
+}
+
 int main(int argc, char** argv) {
     // Initialize the MPI environment. The two arguments to MPI Init are not
     // currently used by MPI implementations, but are there in case future
@@ -191,12 +254,7 @@ int main(int argc, char** argv) {
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
 
-    // using MPI timer to get the start and end time
-    double timeStart, timeEnd;
-
     MPI_Barrier(MPI_COMM_WORLD);
-
-    timeStart = MPI_Wtime();
 
     // BB monitor rank
     if(rank == 0) {
@@ -284,6 +342,7 @@ int main(int argc, char** argv) {
         tp.fileSize = fileSize;
         tp.localBBmonitor = 0;
         tp.lock_localBBmonitor = &lock_localBBmonitor;
+        tp.readBuffer = readBuffer;
 
         // Create the threads
         pthread_create(&con, NULL, consumer, &tp);
@@ -298,76 +357,58 @@ int main(int argc, char** argv) {
         free(burstBuffer);
     }
     // writer rank, first half ranks will write
+    // every 60 seconds with data size of 1.3GB (i.e. fileSize)
     else if (rank < size/2) {
-        // writer processes do not expose BBmoniror memory in the window
-        // [!!!] Note that if not do this, the whole program will hang
-        //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+        int ckptRun = 0; // keep track how many ckpts have been performed
 
-        // before sending the real data, send fileSize to local BB to check global BB status
-        // if local BB is not full, send real data to local BB
-        // if local BB is full but remote BB is not, send to remote BB
-        // else send to PFS directly
-        int BBmonitorRank = 0; // BB monitor rank
+        while(1) {
+            sleep(60); // checkpointing frequency
 
-        // tell BB monitor rank I am a writer
-        int senderID = 1;
-        MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
+            pthread_t wrtr;
 
-        // tell BB monitor how much data I want to write
-        MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.totalRank = size;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize; // checkpointing data size
+            tp.localBBmonitor = 0;
+            tp.lock_localBBmonitor = 0;
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
 
-        // 1 means space left in at least one BB, may not be local BB
-        int checkResult;
-        MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
 
-        // the returned BB rank number could be local BB or a remote BB
-        int returnedBBrank2send;
-        MPI_Recv(&returnedBBrank2send, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        // there is enough space left in local BB or remote BB
-        if(checkResult == 1) {
-            // tell BB how much data I want to write
-            MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
-
-            // send to real data
-            MPI_Send(readBuffer, fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
-            dbg_print("Writer %d: send %lu amount of data to BB on rank %d\n", rank, fileSize, returnedBBrank2send);
-        }
-        else {
-            char filename[64];
-            char *prefix="/scratch.global/fan/rank";
-            strcpy(filename, prefix);
-            char buf[sizeof(int)+1];
-            snprintf(buf, sizeof buf, "%d", rank);
-            strcat(filename, buf);
-            strcat(filename, ".out");
-            fp = fopen(filename, "a+");
-            if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n");
-                return 1;
-            }
-            fwrite(readBuffer , 1 , fileSize , fp );
-            fclose(fp);
-
-            dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n", rank, fileSize);
+            ckptRun++;
         }
     }
-    // the rest half of ranks do nothing
+    // writer rank, the second half ranks will write
+    // every 100 seconds with data size of 650MB (i.e. fileSize/2)
     else {
-        // writer processes do not expose BBmoniror memory in the window
-        // [!!!] Note that if not do this, the whole program will hang
-        //MPI_Win_create(NULL, 0, 1, MPI_INFO_NULL, MPI_COMM_WORLD, &win);
-    }
+        int ckptRun = 0; // keep track how many ckpts have been performed
 
-    timeEnd = MPI_Wtime();
-    if(rank == 0) {
-        printf( "$$ Elapsed time for BB monitor rank %d is %f\n", rank, timeEnd - timeStart );
-    }
-    else if(rank % 8 == 7) {
-        printf( "$$ Elapsed time for BB rank %d is %f\n", rank, timeEnd - timeStart );
-    }
-    else {
-        printf( "$$ Elapsed time for writer rank %d is %f\n", rank, timeEnd - timeStart );
+        while(1) {
+            sleep(100); // checkpointing frequency
+
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.totalRank = size;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize / 2; // checkpointing data size
+            tp.localBBmonitor = 0;
+            tp.lock_localBBmonitor = 0;
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+        }
     }
 
     free(readBuffer);
