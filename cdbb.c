@@ -22,41 +22,41 @@
 #define dbg_print(format,args...)
 #endif
 
-//unsigned long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
-unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
+//long long burstBufferMaxSize = 3145728; // 3MB = 3*1024*1024
+long long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
 
 struct threadParams {
     int rank; // the rank of current process
     int totalRank; // the total number of ranks (processes)
     char* burstBuffer;
     int size; // the size of one burst buffer
-    unsigned long fileSize; // the size of incoming data
+    long long fileSize; // the size of incoming data
     char* readBuffer; // checkpointing data buffer to write
-    unsigned long localBBmonitor;
-    pthread_mutex_t* lock_localBBmonitor; // lock for localBBmonitor
+    long long* localBBmonitor; // length of one
     int ckptRun; // keep track how many ckpts have been performed
+    MPI_Win* win; // to manage shared memory
 };
 
-unsigned long fsize(char* file)
+long long fsize(char* file)
 {
     FILE * f = fopen(file, "r");
     fseek(f, 0, SEEK_END);
-    unsigned long len = (unsigned long)ftell(f);
+    long long len = (long long)ftell(f);
     fclose(f);
     return len;
 }
 
-int findSmallest(unsigned long* array, int size) {
+int findSmallest(long long* array, int size) {
     int i = 0;
     int ans;
-    unsigned long smallest = INT_MAX;
+    long long smallest = INT_MAX;
     for(i=0; i<size; i++) {
         if(smallest > array[i]) {
             smallest = array[i];
             ans = i;
         }
     }
-    dbg_print("Rank of smallest burst buffer offset is %d, offset is %lu\n", ans, smallest);
+    dbg_print("Rank of smallest burst buffer offset is %d, offset is %lld\n", ans, smallest);
     return ans;
 }
 
@@ -79,20 +79,20 @@ void* producer(void *ptr) {
     int i;
 
     while(1) {
-        pthread_mutex_lock(tp->lock_localBBmonitor);
+        MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, *tp->win);
 
         // receive from writer how much data it wants to write
-        unsigned long incomingDataSize;
+        long long incomingDataSize;
         MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
 
         // receive the real data from writer
         MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 5, MPI_COMM_WORLD, &status);
 
-        tp->localBBmonitor += incomingDataSize;
+        *tp->localBBmonitor += incomingDataSize;
 
-        pthread_mutex_unlock(tp->lock_localBBmonitor);
+        dbg_print("BB producer %d: receive %lld amount of data, localBBmonitor is %lld\n", tp->rank, incomingDataSize, *tp->localBBmonitor);
 
-        dbg_print("BB producer %d: receive %lu amount of data, localBBmonitor is %lu\n", tp->rank, incomingDataSize, tp->localBBmonitor);
+        MPI_Win_unlock(0, *tp->win);
     }
     pthread_exit(0);
 }
@@ -103,9 +103,7 @@ void* consumer(void *ptr) {
     dbg_print("BB consumer %d: just entered, nothing been done yet\n", tp->rank);
 
     while(1) {
-        if(tp->localBBmonitor > 0) {
-            pthread_mutex_lock(tp->lock_localBBmonitor);
-
+        if(*tp->localBBmonitor > 0) {
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
             strcpy(filename, prefix);
@@ -123,15 +121,13 @@ void* consumer(void *ptr) {
             fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
             fclose(fp);
 
-            tp->localBBmonitor -= tp->fileSize;
-
-            pthread_mutex_unlock(tp->lock_localBBmonitor);
+            *tp->localBBmonitor -= tp->fileSize;
 
             int BBmonitorRank = 0;
 
-            MPI_Send(&tp->localBBmonitor, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
+            MPI_Send(tp->localBBmonitor, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
 
-            dbg_print("BB consumer %d: drained %lu amount of data to PFS, localBBmonitor is %lu\n", tp->rank, tp->fileSize, tp->localBBmonitor);
+            dbg_print("BB consumer %d: drained %lld amount of data to PFS, localBBmonitor is %lld\n", tp->rank, tp->fileSize, *tp->localBBmonitor);
         }
     }
     pthread_exit(0);
@@ -165,6 +161,8 @@ void* writer(void *ptr) {
     int returnedBBrank2send;
     MPI_Recv(&returnedBBrank2send, 1, MPI_INT, MPI_ANY_SOURCE, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
+    dbg_print("Writer %d: checkResult from BB monitor is %d, returnedBBrank2send is %d\n", tp->rank, checkResult, returnedBBrank2send);
+
     // there is enough space left in local BB or remote BB
     if(checkResult == 1) {
         // tell BB how much data I want to write
@@ -172,7 +170,7 @@ void* writer(void *ptr) {
 
         // send real data
         MPI_Send(tp->readBuffer, tp->fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
-        dbg_print("Writer %d: send %lu amount of data to BB on rank %d\n", tp->rank, tp->fileSize, returnedBBrank2send);
+        dbg_print("Writer %d: send %lld amount of data to BB on rank %d\n", tp->rank, tp->fileSize, returnedBBrank2send);
     }
     else {
         char filename[64];
@@ -219,15 +217,21 @@ int main(int argc, char** argv) {
 
     MPI_Status status;
 
-    // create window to manage BB monitor
-    MPI_Win win;
+    // create window to manage global BB monitor
+    MPI_Win win_BB_monitor;
     int BBmonitorSize = size / 8;
-    unsigned long* BBmonitor = (unsigned long*)xMPI_Alloc_mem(BBmonitorSize * sizeof(unsigned long));
+    long long* BBmonitor = (long long*)xMPI_Alloc_mem(BBmonitorSize * sizeof(long long));
     int i;
     for(i=0; i<BBmonitorSize; i++) {
         BBmonitor[i] = 0;
     }
-    MPI_Win_create(BBmonitor, sizeof(unsigned long) * BBmonitorSize, sizeof(unsigned long), MPI_INFO_NULL, MPI_COMM_WORLD, &win);
+    MPI_Win_create(BBmonitor, sizeof(long long) * BBmonitorSize, sizeof(long long), MPI_INFO_NULL, MPI_COMM_WORLD, &win_BB_monitor);
+
+    // create window to manage local BB monitor
+    MPI_Win win_local_BB;
+    long long* localBBmonitor = (long long*)xMPI_Alloc_mem(sizeof(long long));
+    *localBBmonitor = 0;
+    MPI_Win_create(localBBmonitor, sizeof(long long), sizeof(long long), MPI_INFO_NULL, MPI_COMM_WORLD, &win_local_BB);
 
     // Print off a hello world message
     dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
@@ -241,8 +245,8 @@ int main(int argc, char** argv) {
     }
 
     // read file to buffer
-    //unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/ICC2011.pdf");
-    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
+    //long long fileSize = fsize("/home/dudh/fanxx234/CDBB/ICC2011.pdf");
+    long long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
     char *readBuffer;
     fseek(fp, 0, SEEK_END);
     rewind(fp);
@@ -264,14 +268,14 @@ int main(int argc, char** argv) {
 
             // talking with BB
             if(senderID == 0) {
-                unsigned long newBBmonitor;
+                long long newBBmonitor;
                 MPI_Recv(&newBBmonitor, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 6, MPI_COMM_WORLD, &status);
                 BBmonitor[status.MPI_SOURCE / 8 + 7] = newBBmonitor;
             }
             // talking with writer
             if(senderID == 1) {
                 // receive from writer how much data it wants to write
-                unsigned long incomingDataSize;
+                long long incomingDataSize;
                 MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
 
                 // calculate localBB offset in BBmonitor
@@ -279,7 +283,7 @@ int main(int argc, char** argv) {
 
                 int checkResult = 0; // denote whether any BB has space left; 1 means yes and 0 means no
 
-                MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, win);
+                MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, win_BB_monitor);
 
                 int rankOfSmallestBurstBufferOffset = findSmallest(BBmonitor, BBmonitorSize);
 
@@ -314,11 +318,9 @@ int main(int argc, char** argv) {
                     MPI_Send(&BBrank2send, 1, MPI_INT, status.MPI_SOURCE, 3, MPI_COMM_WORLD);
                     dbg_print("BB monitor: all BBs are full for writer %d\n", status.MPI_SOURCE);
                 }
-                MPI_Win_unlock(0, win);
+                MPI_Win_unlock(0, win_BB_monitor);
             }
         }
-        MPI_Win_free(&win);
-        MPI_Free_mem(BBmonitor);
     }
     // BB rank
     if(rank % 8 == 7) {
@@ -332,17 +334,15 @@ int main(int argc, char** argv) {
 
         pthread_t pro, con;
 
-        pthread_mutex_t lock_localBBmonitor;
-
         struct threadParams tp;
         tp.rank = rank;
         tp.totalRank = size;
         tp.burstBuffer = burstBuffer;
         tp.size = burstBufferMaxSize;
         tp.fileSize = fileSize;
-        tp.localBBmonitor = 0;
-        tp.lock_localBBmonitor = &lock_localBBmonitor;
+        tp.localBBmonitor = localBBmonitor;
         tp.readBuffer = readBuffer;
+        tp.win = &win_local_BB;
 
         // Create the threads
         pthread_create(&con, NULL, consumer, &tp);
@@ -362,8 +362,6 @@ int main(int argc, char** argv) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
         while(1) {
-            sleep(60); // checkpointing frequency
-
             pthread_t wrtr;
 
             struct threadParams tp;
@@ -372,15 +370,17 @@ int main(int argc, char** argv) {
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
             tp.fileSize = fileSize; // checkpointing data size
-            tp.localBBmonitor = 0;
-            tp.lock_localBBmonitor = 0;
+            tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
+            tp.win = NULL;
 
             // Create the threads
             pthread_create(&wrtr, NULL, writer, &tp);
 
             ckptRun++;
+
+            sleep(60); // checkpointing frequency
         }
     }
     // writer rank, the second half ranks will write
@@ -389,8 +389,6 @@ int main(int argc, char** argv) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
         while(1) {
-            sleep(100); // checkpointing frequency
-
             pthread_t wrtr;
 
             struct threadParams tp;
@@ -399,19 +397,25 @@ int main(int argc, char** argv) {
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
             tp.fileSize = fileSize / 2; // checkpointing data size
-            tp.localBBmonitor = 0;
-            tp.lock_localBBmonitor = 0;
+            tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
+            tp.win = NULL;
 
             // Create the threads
             pthread_create(&wrtr, NULL, writer, &tp);
 
             ckptRun++;
+
+            sleep(100); // checkpointing frequency
         }
     }
 
     free(readBuffer);
+    MPI_Win_free(&win_BB_monitor);
+    MPI_Win_free(&win_local_BB);
+    MPI_Free_mem(BBmonitor);
+    MPI_Free_mem(localBBmonitor);
 
     // Finalize the MPI environment. No more MPI calls can be made after this
     MPI_Finalize();
