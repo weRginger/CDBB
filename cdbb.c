@@ -270,14 +270,12 @@ int main(int argc, char** argv) {
             int senderID; // who is sending me information? 0 means from BB; 1 means from writer
             MPI_Recv(&senderID, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
 
-            dbg_print("senderID is %d\n", senderID);
-
             // talking with BB
             if(senderID == 0) {
                 long long newBBmonitor;
                 MPI_Recv(&newBBmonitor, 1, MPI_LONG_LONG, MPI_ANY_SOURCE, 6, MPI_COMM_WORLD, &status);
-                BBmonitor[status.MPI_SOURCE / 8 + 7] = newBBmonitor;
-                dbg_print("\n");
+                int localBB = status.MPI_SOURCE / 8; // calculate localBB offset in BBmonitor
+                BBmonitor[localBB] = newBBmonitor;
             }
             // talking with writer
             if(senderID == 1) {
