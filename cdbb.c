@@ -9,6 +9,8 @@
 #include <time.h>
 #include <pthread.h>
 #include <limits.h>
+#include <stdbool.h>
+#include <assert.h>
 
 #define debug 1
 
@@ -70,6 +72,58 @@ void* xMPI_Alloc_mem(size_t nbytes) {
     return p;
 }
 
+// a FIFO queue for producer and consumer to manage accepting and draining data
+// start
+
+#define MAX 2000
+
+long long queue[MAX];
+int front = 0;
+int rear = -1;
+int itemCount = 0;
+
+long long peek() {
+    return queue[front];
+}
+
+bool isEmpty() {
+    return itemCount == 0;
+}
+
+bool isFull() {
+    return itemCount == MAX;
+}
+
+int size() {
+    return itemCount;
+}
+
+void insert(long long data) {
+    if(!isFull()) {
+        if(rear == MAX-1) {
+            rear = -1;
+        }
+        queue[++rear] = data;
+        itemCount++;
+    }
+    else {
+        printf("FIFO queue is full. Enlarge it!!!\n");
+    }
+}
+
+long long removeData() {
+    long long data = queue[front++];
+
+    if(front == MAX) {
+        front = 0;
+    }
+
+    itemCount--;
+    return data;
+}
+// end
+// FIFO queue implementation
+
 void* producer(void *ptr) {
     struct threadParams *tp = ptr;
 
@@ -89,6 +143,8 @@ void* producer(void *ptr) {
         MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 5, MPI_COMM_WORLD, &status);
 
         *tp->localBBmonitor += incomingDataSize;
+
+        insert(incomingDataSize);
 
         dbg_print("BB producer %d: receive %lld amount of data, localBBmonitor is %lld\n", tp->rank, incomingDataSize, *tp->localBBmonitor);
 
@@ -118,10 +174,13 @@ void* consumer(void *ptr) {
                 return;
             }
 
-            fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
+            assert(!isEmpty());
+            long long drainSize = removeData();
+
+            fwrite(tp->burstBuffer, 1, drainSize, fp);
             fclose(fp);
 
-            *tp->localBBmonitor -= tp->fileSize;
+            *tp->localBBmonitor -= drainSize;
 
             int BBmonitorRank = 0;
 
@@ -131,7 +190,7 @@ void* consumer(void *ptr) {
 
             MPI_Send(tp->localBBmonitor, 1, MPI_LONG_LONG, BBmonitorRank, 6, MPI_COMM_WORLD);
 
-            dbg_print("BB consumer %d: drained %lld amount of data to PFS, localBBmonitor is %lld\n", tp->rank, tp->fileSize, *tp->localBBmonitor);
+            dbg_print("BB consumer %d: drained %lld amount of data to PFS, localBBmonitor is %lld\n", tp->rank, drainSize, *tp->localBBmonitor);
         }
     }
     pthread_exit(0);
@@ -237,9 +296,6 @@ int main(int argc, char** argv) {
     *localBBmonitor = 0;
     MPI_Win_create(localBBmonitor, sizeof(long long), sizeof(long long), MPI_INFO_NULL, MPI_COMM_WORLD, &win_local_BB);
 
-    // Print off a hello world message
-    dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
-
     FILE *fp;
     //fp = fopen("/home/dudh/fanxx234/CDBB/ICC2011.pdf", "r");
     fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
@@ -261,6 +317,9 @@ int main(int argc, char** argv) {
     }
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
+
+    // Print off a hello world message
+    dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
     MPI_Barrier(MPI_COMM_WORLD);
 
