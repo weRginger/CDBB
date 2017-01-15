@@ -249,7 +249,7 @@ void* writer(void *ptr) {
             printf("cannot open file for write. Exit!\n");
             return;
         }
-        fwrite(tp->readBuffer , 1 , tp->fileSize , fp );
+        fwrite(tp->readBuffer, 1, tp->fileSize, fp);
         fclose(fp);
 
         dbg_print("Writer %d: Not enough space left in any BBs -> write %u to PFS\n", tp->rank, tp->fileSize);

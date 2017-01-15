@@ -8,8 +8,11 @@
 #include <stdlib.h>
 #include <time.h>
 #include <pthread.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <assert.h>
 
-#define debug 0
+#define debug 1
 
 #if debug
 #define dbg_print(format,args...)\
@@ -28,10 +31,12 @@ unsigned long burstBufferOffset = 0;
 pthread_mutex_t lock_burstBufferOffset; // lock for burstBufferOffset
 
 struct threadParams {
-    int rank;
+    int rank; // the rank of current process
     char* burstBuffer;
-    int size;
-    unsigned long fileSize;
+    int size; // the size of one burst buffer
+    unsigned long fileSize; // the size of incoming data
+    char* readBuffer; // checkpointing data buffer to write
+    int ckptRun; // keep track how many ckpts have been performed
 };
 
 unsigned long fsize(char* file)
@@ -42,6 +47,58 @@ unsigned long fsize(char* file)
     fclose(f);
     return len;
 }
+
+// a FIFO queue for producer and consumer to manage accepting and draining data
+// start
+
+#define MAX 2000
+
+long long queue[MAX];
+int front = 0;
+int rear = -1;
+int itemCount = 0;
+
+long long peek() {
+    return queue[front];
+}
+
+bool isEmpty() {
+    return itemCount == 0;
+}
+
+bool isFull() {
+    return itemCount == MAX;
+}
+
+int size() {
+    return itemCount;
+}
+
+void insert(long long data) {
+    if(!isFull()) {
+        if(rear == MAX-1) {
+            rear = -1;
+        }
+        queue[++rear] = data;
+        itemCount++;
+    }
+    else {
+        printf("FIFO queue is full. Enlarge it!!!\n");
+    }
+}
+
+long long removeData() {
+    long long data = queue[front++];
+
+    if(front == MAX) {
+        front = 0;
+    }
+
+    itemCount--;
+    return data;
+}
+// end
+// FIFO queue implementation
 
 void* producer(void *ptr) {
     struct threadParams *tp = ptr;
@@ -68,6 +125,8 @@ void* producer(void *ptr) {
             MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
             MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
             burstBufferOffset += incomingDataSize;
+
+            insert(incomingDataSize);
 
             pthread_mutex_unlock(&lock_burstBufferOffset);
 
@@ -99,17 +158,61 @@ void* consumer(void *ptr) {
                 printf("cannot open file for write. Exit!\n");
                 return;
             }
-            fwrite(tp->burstBuffer , 1 , tp->fileSize , fp );
+
+            assert(!isEmpty());
+            long long drainSize = removeData();
+
+            fwrite(tp->burstBuffer, 1, drainSize, fp);
             fclose(fp);
 
-            burstBufferOffset -= tp->fileSize;
+            burstBufferOffset -= drainSize;
 
             pthread_mutex_unlock(&lock_burstBufferOffset);
 
-            dbg_print("BB consumer %d: drained %lu amount of data to PFS, burstBufferOffset is %lu\n", tp->rank, tp->fileSize, burstBufferOffset);
+            dbg_print("BB consumer %d: drained %lu amount of data to PFS, burstBufferOffset is %lu\n", tp->rank, drainSize, burstBufferOffset);
         }
     }
     pthread_exit(0);
+}
+
+void* writer(void *ptr) {
+    // using MPI timer to get the start and end time
+    double timeStart, timeEnd;
+    timeStart = MPI_Wtime();
+
+    struct threadParams *tp = ptr;
+
+    // before sending the real data, send fileSize to BB to check how much space left
+    MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, (tp->rank/8)*8 + 7, 0, MPI_COMM_WORLD);
+    int checkResult;
+    MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+    // only there is enough space left in BB, we will send the real data to it.
+    if(checkResult == 1) {
+        MPI_Send(tp->readBuffer, tp->fileSize, MPI_CHAR, (tp->rank/8)*8 + 7, 2, MPI_COMM_WORLD);
+        dbg_print("Writer %d: send %lld amount of data to BB\n", tp->rank, tp->fileSize);
+    }
+    else {
+        dbg_print("Writer %d: Not enough space left in BB -> write to PFS\n", tp->rank);
+
+        char filename[64];
+        char *prefix="/scratch.global/fan/rank";
+        strcpy(filename, prefix);
+        char buf[sizeof(int)+1];
+        snprintf(buf, sizeof buf, "%d", tp->rank);
+        strcat(filename, buf);
+        strcat(filename, ".out");
+        FILE *fp;
+        fp = fopen(filename, "a+");
+        if(fp == NULL) {
+            printf("cannot open file for write. Exit!\n");
+            return;
+        }
+        fwrite(tp->readBuffer, 1, tp->fileSize, fp);
+        fclose(fp);
+    }
+
+    timeEnd = MPI_Wtime();
+    printf( "$$ CKPT Run %d: Elapsed time for writer rank %d is %f, timeStart %f, timeEnd %f\n", tp->ckptRun, tp->rank, timeEnd - timeStart, timeStart, timeEnd);
 }
 
 int main(int argc, char** argv) {
@@ -152,12 +255,7 @@ int main(int argc, char** argv) {
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
 
-    // using MPI timer to get the start and end time
-    double timeStart, timeEnd;
-
     MPI_Barrier(MPI_COMM_WORLD);
-
-    timeStart = MPI_Wtime();
 
     // for CDBB, rank 0 is BB monitor rank
     // however for LDBB, there is no BB monitor rank, so we just leave it here
@@ -176,6 +274,8 @@ int main(int argc, char** argv) {
         tp.burstBuffer = burstBuffer;
         tp.size = burstBufferMaxSize;
         tp.fileSize = fileSize;
+        tp.readBuffer = readBuffer;
+        tp.ckptRun = 0;
 
         // Create the threads
         pthread_create(&con, NULL, consumer, &tp);
@@ -191,48 +291,50 @@ int main(int argc, char** argv) {
     }
     // writer rank, the first half rank writes
     else if(rank < size/2) {
-        // before sending the real data, send fileSize to BB to check how much space left
-        MPI_Send(&fileSize, 1, MPI_UNSIGNED_LONG, (rank/8)*8 + 7, 0, MPI_COMM_WORLD);
-        int checkResult;
-        MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        // only there is enough space left in BB, we will send the real data to it.
-        if(checkResult == 1) {
-            MPI_Send(readBuffer, fileSize, MPI_CHAR, (rank/8)*8 + 7, 2, MPI_COMM_WORLD);
-            dbg_print("Writer %d: send %u amount of data to BB\n", rank, fileSize);
-        }
-        else {
-            dbg_print("Writer %d: Not enough space left in BB -> write to PFS\n", rank);
+        int ckptRun = 0; // keep track how many ckpts have been performed
 
-            char filename[64];
-            char *prefix="/scratch.global/fan/rank";
-            strcpy(filename, prefix);
-            char buf[sizeof(int)+1];
-            snprintf(buf, sizeof buf, "%d", rank);
-            strcat(filename, buf);
-            strcat(filename, ".out");
-            fp = fopen(filename, "a+");
-            if(fp == NULL) {
-                printf("cannot open file for write. Exit!\n");
-                return 1;
-            }
-            fwrite(readBuffer , 1 , fileSize , fp );
-            fclose(fp);
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(60); // checkpointing frequency
         }
     }
-    // the rest half ranks do nothing
+    // writer rank, the second half ranks will write
+    // every 100 seconds with data size of 650MB (i.e. fileSize/2)
     else {
-        // do nothing
-    }
+        int ckptRun = 0; // keep track how many ckpts have been performed
 
-    timeEnd = MPI_Wtime();
-    if(rank == 0) {
-        printf( "$$ Elapsed time for BB monitor rank %d is %f\n", rank, timeEnd - timeStart );
-    }
-    else if(rank % 8 == 7) {
-        printf( "$$ Elapsed time for BB rank %d is %f\n", rank, timeEnd - timeStart );
-    }
-    else {
-        printf( "$$ Elapsed time for writer rank %d is %f\n", rank, timeEnd - timeStart );
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize / 2; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(100); // checkpointing frequency
+        }
     }
 
     free(readBuffer);
