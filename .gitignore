@@ -3,6 +3,7 @@ nobb
 ldbb
 dedupe
 cdbb-dedupe
+analyze
 *.e
 *.vmdk
 
