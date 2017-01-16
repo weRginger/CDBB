@@ -254,6 +254,9 @@ int main(int argc, char** argv) {
     }
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
+    
+    // Print off a hello world message
+    dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
     MPI_Barrier(MPI_COMM_WORLD);
 
