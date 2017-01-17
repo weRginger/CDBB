@@ -24,7 +24,7 @@
 #define dbg_print(format,args...)
 #endif
 
-unsigned long burstBufferMaxSize = 3221225472; // 3GB = 3*1024*1024*1024
+unsigned long burstBufferMaxSize = 4294967296; // 4GB = 4*1024*1024*1024
 
 unsigned long burstBufferOffset = 0;
 
@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
     }
     fread(readBuffer, 1, fileSize, fp);
     fclose(fp);
-    
+
     // Print off a hello world message
     dbg_print("Hello world from processor %s, rank %d out of %d processors\n", processor_name, rank, size);
 
@@ -268,7 +268,7 @@ int main(int argc, char** argv) {
     // BB rank
     else if(rank % 8 == 7) {
         char *burstBuffer;
-        burstBuffer = (char*) malloc(sizeof(char) * 3 *  1024 * 1024 *1024 ); // malloc 3GB as the local burst buffer
+        burstBuffer = (char*) malloc(sizeof(char) * 4 *  1024 * 1024 *1024 ); // malloc 4GB as the local burst buffer
 
         pthread_t pro, con;
 
@@ -292,7 +292,8 @@ int main(int argc, char** argv) {
 
         free(burstBuffer);
     }
-    // writer rank, the first half rank writes
+    // writer rank, first half ranks will write
+    // every 100 seconds with data size of 1.3GB (i.e. fileSize)
     else if(rank < size/2) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
@@ -312,11 +313,35 @@ int main(int argc, char** argv) {
 
             ckptRun++;
 
-            sleep(60); // checkpointing frequency
+            sleep(100); // checkpointing frequency
         }
     }
-    // writer rank, the second half ranks will write
-    // every 100 seconds with data size of 650MB (i.e. fileSize/2)
+    // writer rank, the third quarter ranks will write
+    // every 75 seconds with data size of 1.1 GB
+    else if (rank < size / 4 * 3) {
+        int ckptRun = 0; // keep track how many ckpts have been performed
+
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = 1181116006; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(75); // checkpointing frequency
+        }
+    }
+    // writer rank, the last quarter ranks will write
+    // every 60 seconds with data size of 0.8 GB
     else {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
@@ -327,7 +352,7 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize / 2; // checkpointing data size
+            tp.fileSize = 858993459; // checkpointing data size
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -336,7 +361,7 @@ int main(int argc, char** argv) {
 
             ckptRun++;
 
-            sleep(100); // checkpointing frequency
+            sleep(60); // checkpointing frequency
         }
     }
 
