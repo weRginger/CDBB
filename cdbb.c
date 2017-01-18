@@ -1,5 +1,6 @@
 // Author: Ziqi Fan
 // cdbb.c: Collaborative Distributed Burst Buffer
+// Note: After 01/18/2017, the name of BB monitor rank is changed to BB coordiantor rank.
 //
 
 #include <mpi.h>
@@ -323,7 +324,7 @@ int main(int argc, char** argv) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // BB monitor rank
+    // BB coordinator rank
     if(rank == 0) {
         while(1) {
             int senderID; // who is sending me information? 0 means from BB; 1 means from writer

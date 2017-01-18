@@ -260,8 +260,8 @@ int main(int argc, char** argv) {
 
     MPI_Barrier(MPI_COMM_WORLD);
 
-    // for CDBB, rank 0 is BB monitor rank
-    // however for LDBB, there is no BB monitor rank, so we just leave it here
+    // for CDBB, rank 0 is BB coordinator rank
+    // however for LDBB, there is no BB coordinator rank, so we just leave it here
     if(rank == 0) {
         while(1) {}
     }
