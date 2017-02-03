@@ -236,14 +236,14 @@ int main(int argc, char** argv) {
 
     FILE *fp;
 
-    fp = fopen("/home/dudh/fanxx234/CDBB/sample.vmdk", "r");
+    fp = fopen("/home/dudh/fanxx234/CDBB/ddFile.input", "r");
     if(fp == NULL) {
         printf("cannot open file for read. Exit!\n");
         return 1;
     }
 
     // read file to buffer
-    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/sample.vmdk");
+    unsigned long fileSize = fsize("/home/dudh/fanxx234/CDBB/ddFile.input");
     char *readBuffer;
     fseek(fp, 0, SEEK_END);
     rewind(fp);
@@ -292,10 +292,14 @@ int main(int argc, char** argv) {
 
         free(burstBuffer);
     }
-    // writer rank, first half ranks will write
-    // every 100 seconds with data size of 1.3GB (i.e. fileSize)
-    else if(rank < size/2) {
+    // 1st application from with 64 ranks from 1 to 73
+    else if (rank >= 1 && rank <= 73) {
         int ckptRun = 0; // keep track how many ckpts have been performed
+
+        srand(time(NULL));
+        int r = rand() % 600;
+        sleep(r);
+        dbg_print("1st application start after sleep for %d (random generated) seconds\n", r);
 
         while(1) {
             pthread_t wrtr;
@@ -313,13 +317,17 @@ int main(int argc, char** argv) {
 
             ckptRun++;
 
-            sleep(100); // checkpointing frequency
+            sleep(600); // checkpointing frequency
         }
     }
-    // writer rank, the third quarter ranks will write
-    // every 75 seconds with data size of 1.1 GB
-    else if (rank < size / 4 * 3) {
+    // 2nd application from with 64 ranks from 74 to 146
+    else if (rank >= 74 && rank <= 146) {
         int ckptRun = 0; // keep track how many ckpts have been performed
+
+        srand(time(NULL));
+        int r = rand() % 600;
+        sleep(r);
+        dbg_print("2nd application start after sleep for %d (random generated) seconds\n", r);
 
         while(1) {
             pthread_t wrtr;
@@ -328,7 +336,7 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 1181116006; // checkpointing data size
+            tp.fileSize = fileSize; // checkpointing data size
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -337,32 +345,96 @@ int main(int argc, char** argv) {
 
             ckptRun++;
 
-            sleep(75); // checkpointing frequency
+            sleep(600); // checkpointing frequency
         }
     }
-    // writer rank, the last quarter ranks will write
-    // every 60 seconds with data size of 0.8 GB
+    // 3rd application from with 64 ranks from 147 to 219
+    else if (rank >= 147 && rank <= 219) {
+        int ckptRun = 0; // keep track how many ckpts have been performed
+
+        srand(time(NULL));
+        int r = rand() % 600;
+        sleep(r);
+        dbg_print("3rd application start after sleep for %d (random generated) seconds\n", r);
+
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(600); // checkpointing frequency
+        }
+    }
+    // 4th application from with 64 ranks from 220 to 292
+    else if (rank >= 147 && rank <= 219) {
+        int ckptRun = 0; // keep track how many ckpts have been performed
+
+        srand(time(NULL));
+        int r = rand() % 600;
+        sleep(r);
+        dbg_print("4th application start after sleep for %d (random generated) seconds\n", r);
+
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(600); // checkpointing frequency
+        }
+    }
+    // 5th application from with 64 ranks from 293 to 365
+    else if (rank >= 147 && rank <= 219) {
+        int ckptRun = 0; // keep track how many ckpts have been performed
+
+        srand(time(NULL));
+        int r = rand() % 600;
+        sleep(r);
+        dbg_print("4th application start after sleep for %d (random generated) seconds\n", r);
+
+        while(1) {
+            pthread_t wrtr;
+
+            struct threadParams tp;
+            tp.rank = rank;
+            tp.burstBuffer = NULL;
+            tp.size = burstBufferMaxSize;
+            tp.fileSize = fileSize; // checkpointing data size
+            tp.readBuffer = readBuffer;
+            tp.ckptRun = ckptRun;
+
+            // Create the threads
+            pthread_create(&wrtr, NULL, writer, &tp);
+
+            ckptRun++;
+
+            sleep(600); // checkpointing frequency
+        }
+    }
+    // rest ranks do nothing
     else {
-        int ckptRun = 0; // keep track how many ckpts have been performed
-
-        while(1) {
-            pthread_t wrtr;
-
-            struct threadParams tp;
-            tp.rank = rank;
-            tp.burstBuffer = NULL;
-            tp.size = burstBufferMaxSize;
-            tp.fileSize = 858993459; // checkpointing data size
-            tp.readBuffer = readBuffer;
-            tp.ckptRun = ckptRun;
-
-            // Create the threads
-            pthread_create(&wrtr, NULL, writer, &tp);
-
-            ckptRun++;
-
-            sleep(60); // checkpointing frequency
-        }
+        dbg_print("Rank %d does nothing\n", rank);
     }
 
     free(readBuffer);
