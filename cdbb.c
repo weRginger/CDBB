@@ -425,6 +425,7 @@ int main(int argc, char** argv) {
     else if (rank >= 1 && rank <= 73) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
+        sleep(5);
         srand(time(NULL));
         int r = rand() % 600;
         sleep(r);
@@ -438,7 +439,7 @@ int main(int argc, char** argv) {
             tp.totalRank = size;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize; // checkpointing data size
+            tp.fileSize = 167772160; // checkpointing data size
             tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
@@ -456,6 +457,7 @@ int main(int argc, char** argv) {
     else if (rank >= 74 && rank <= 146) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
+        sleep(10);
         srand(time(NULL));
         int r = rand() % 600;
         sleep(r);
@@ -469,7 +471,7 @@ int main(int argc, char** argv) {
             tp.totalRank = size;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize; // checkpointing data size
+            tp.fileSize = 285212672; // checkpointing data size
             tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
@@ -487,6 +489,7 @@ int main(int argc, char** argv) {
     else if (rank >= 147 && rank <= 219) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
+        sleep(15);
         srand(time(NULL));
         int r = rand() % 600;
         sleep(r);
@@ -500,7 +503,7 @@ int main(int argc, char** argv) {
             tp.totalRank = size;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize; // checkpointing data size
+            tp.fileSize = 654311424; // checkpointing data size
             tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
@@ -515,9 +518,10 @@ int main(int argc, char** argv) {
         }
     }
     // 4th application from with 64 ranks from 220 to 292
-    else if (rank >= 147 && rank <= 219) {
+    else if (rank >= 220 && rank <= 292) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
+        sleep(20);
         srand(time(NULL));
         int r = rand() % 600;
         sleep(r);
@@ -531,7 +535,7 @@ int main(int argc, char** argv) {
             tp.totalRank = size;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize; // checkpointing data size
+            tp.fileSize = 1660944384; // checkpointing data size
             tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
@@ -546,9 +550,10 @@ int main(int argc, char** argv) {
         }
     }
     // 5th application from with 64 ranks from 293 to 365
-    else if (rank >= 147 && rank <= 219) {
+    else if (rank >= 293 && rank <= 365) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
+        sleep(25);
         srand(time(NULL));
         int r = rand() % 600;
         sleep(r);
@@ -562,7 +567,7 @@ int main(int argc, char** argv) {
             tp.totalRank = size;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = fileSize; // checkpointing data size
+            tp.fileSize = 2214592512; // checkpointing data size
             tp.localBBmonitor = NULL;
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
