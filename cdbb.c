@@ -340,7 +340,7 @@ int main(int argc, char** argv) {
             // talking with writer
             if(senderID == 1) {
                 // receive from writer how much data it wants to write
-                unsigned long incomingDataSize;
+                int incomingDataSize;
                 MPI_Recv(&incomingDataSize, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
 
                 // calculate localBB offset in BBmonitor
