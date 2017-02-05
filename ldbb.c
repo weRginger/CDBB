@@ -53,12 +53,12 @@ unsigned long fsize(char* file)
 
 #define MAX 2000
 
-long long queue[MAX];
+unsigned long queue[MAX];
 int front = 0;
 int rear = -1;
 int itemCount = 0;
 
-long long peek() {
+unsigned long peek() {
     return queue[front];
 }
 
@@ -74,7 +74,7 @@ int size() {
     return itemCount;
 }
 
-void insert(long long data) {
+void insert(unsigned long data) {
     if(!isFull()) {
         if(rear == MAX-1) {
             rear = -1;
@@ -87,8 +87,8 @@ void insert(long long data) {
     }
 }
 
-long long removeData() {
-    long long data = queue[front++];
+unsigned long removeData() {
+    unsigned long data = queue[front++];
 
     if(front == MAX) {
         front = 0;
@@ -160,7 +160,7 @@ void* consumer(void *ptr) {
             }
 
             assert(!isEmpty());
-            long long drainSize = removeData();
+            unsigned long drainSize = removeData();
 
             fwrite(tp->burstBuffer, 1, drainSize, fp);
             fclose(fp);
@@ -295,12 +295,9 @@ int main(int argc, char** argv) {
     // 1st application from with 64 ranks from 1 to 73
     else if (rank >= 1 && rank <= 73) {
         int ckptRun = 0; // keep track how many ckpts have been performed
-        
-        sleep(5);
-        srand(time(NULL));
-        int r = rand() % 600;
-        sleep(r);
-        dbg_print("1st application start after sleep for %d (random generated) seconds\n", r);
+
+        sleep(0);
+        dbg_print("1st application start after sleep for 00 seconds\n");
 
         while(1) {
             pthread_t wrtr;
@@ -324,12 +321,9 @@ int main(int argc, char** argv) {
     // 2nd application from with 64 ranks from 74 to 146
     else if (rank >= 74 && rank <= 146) {
         int ckptRun = 0; // keep track how many ckpts have been performed
-        
-        sleep(10);
-        srand(time(NULL));
-        int r = rand() % 600;
-        sleep(r);
-        dbg_print("2nd application start after sleep for %d (random generated) seconds\n", r);
+
+        sleep(120);
+        dbg_print("2nd application start after sleep for 120 seconds\n");
 
         while(1) {
             pthread_t wrtr;
@@ -354,11 +348,8 @@ int main(int argc, char** argv) {
     else if (rank >= 147 && rank <= 219) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
-        sleep(15);
-        srand(time(NULL));
-        int r = rand() % 600;
-        sleep(r);
-        dbg_print("3rd application start after sleep for %d (random generated) seconds\n", r);
+        sleep(240);
+        dbg_print("3rd application start after sleep for 240 seconds\n");
 
         while(1) {
             pthread_t wrtr;
@@ -383,11 +374,8 @@ int main(int argc, char** argv) {
     else if (rank >= 220 && rank <= 292) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
-        sleep(20);
-        srand(time(NULL));
-        int r = rand() % 600;
-        sleep(r);
-        dbg_print("4th application start after sleep for %d (random generated) seconds\n", r);
+        sleep(360);
+        dbg_print("4th application start after sleep for 360 seconds\n");
 
         while(1) {
             pthread_t wrtr;
@@ -412,11 +400,8 @@ int main(int argc, char** argv) {
     else if (rank >= 293 && rank <= 365) {
         int ckptRun = 0; // keep track how many ckpts have been performed
 
-        sleep(25);
-        srand(time(NULL));
-        int r = rand() % 600;
-        sleep(r);
-        dbg_print("4th application start after sleep for %d (random generated) seconds\n", r);
+        sleep(480);
+        dbg_print("5th application start after sleep for 480 seconds\n");
 
         while(1) {
             pthread_t wrtr;
@@ -425,7 +410,7 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 2214592512; // checkpointing data size
+            tp.fileSize = (unsigned long)2214592512; // checkpointing data size
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
