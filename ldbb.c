@@ -410,7 +410,7 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = (unsigned long)2214592512; // checkpointing data size
+            tp.fileSize = 2147483646; // checkpointing data size
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
