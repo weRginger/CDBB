@@ -33,7 +33,7 @@ struct threadParams {
     int totalRank; // the total number of ranks (processes)
     char* burstBuffer;
     int size; // the size of one burst buffer
-    unsigned long fileSize; // the size of incoming data
+    int fileSize; // the size of incoming data
     char* readBuffer; // checkpointing data buffer to write
     unsigned long* localBBmonitor; // length of one
     int ckptRun; // keep track how many ckpts have been performed
@@ -137,8 +137,8 @@ void* producer(void *ptr) {
         MPI_Win_lock(MPI_LOCK_SHARED, 0, 0, *tp->win);
 
         // receive from writer how much data it wants to write
-        unsigned long incomingDataSize;
-        MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
+        int incomingDataSize;
+        MPI_Recv(&incomingDataSize, 1, MPI_INT, MPI_ANY_SOURCE, 4, MPI_COMM_WORLD, &status);
 
         // receive the real data from writer
         MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 5, MPI_COMM_WORLD, &status);
@@ -215,7 +215,7 @@ void* writer(void *ptr) {
     MPI_Send(&senderID, 1, MPI_INT, BBmonitorRank, 0, MPI_COMM_WORLD);
 
     // tell BB monitor how much data I want to write
-    MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, BBmonitorRank, 1, MPI_COMM_WORLD);
+    MPI_Send(&tp->fileSize, 1, MPI_INT, BBmonitorRank, 1, MPI_COMM_WORLD);
 
     // 1 means space left in at least one BB, may not be local BB
     int checkResult;
@@ -230,7 +230,7 @@ void* writer(void *ptr) {
     // there is enough space left in local BB or remote BB
     if(checkResult == 1) {
         // tell BB how much data I want to write
-        MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, returnedBBrank2send, 4, MPI_COMM_WORLD);
+        MPI_Send(&tp->fileSize, 1, MPI_INT, returnedBBrank2send, 4, MPI_COMM_WORLD);
 
         // send real data
         MPI_Send(tp->readBuffer, tp->fileSize, MPI_CHAR, returnedBBrank2send, 5, MPI_COMM_WORLD);
@@ -341,7 +341,7 @@ int main(int argc, char** argv) {
             if(senderID == 1) {
                 // receive from writer how much data it wants to write
                 unsigned long incomingDataSize;
-                MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
+                MPI_Recv(&incomingDataSize, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, &status);
 
                 // calculate localBB offset in BBmonitor
                 int localBB = status.MPI_SOURCE / 8;

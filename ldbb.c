@@ -34,7 +34,7 @@ struct threadParams {
     int rank; // the rank of current process
     char* burstBuffer;
     int size; // the size of one burst buffer
-    unsigned long fileSize; // the size of incoming data
+    int fileSize; // the size of incoming data
     char* readBuffer; // checkpointing data buffer to write
     int ckptRun; // keep track how many ckpts have been performed
 };
@@ -107,8 +107,8 @@ void* producer(void *ptr) {
 
     while (1) {
         // receive from writer how much data it wants to write
-        unsigned long incomingDataSize;
-        MPI_Recv(&incomingDataSize, 1, MPI_UNSIGNED_LONG, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
+        int incomingDataSize;
+        MPI_Recv(&incomingDataSize, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, &status);
         int checkResult = 0;
         // BB has no space left
         if(burstBufferOffset + incomingDataSize > burstBufferMaxSize) {
@@ -183,7 +183,7 @@ void* writer(void *ptr) {
     struct threadParams *tp = ptr;
 
     // before sending the real data, send fileSize to BB to check how much space left
-    MPI_Send(&tp->fileSize, 1, MPI_UNSIGNED_LONG, (tp->rank/8)*8 + 7, 0, MPI_COMM_WORLD);
+    MPI_Send(&tp->fileSize, 1, MPI_INT, (tp->rank/8)*8 + 7, 0, MPI_COMM_WORLD);
     int checkResult;
     MPI_Recv(&checkResult, 1, MPI_INT, MPI_ANY_SOURCE, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
     // only there is enough space left in BB, we will send the real data to it.
