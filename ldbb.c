@@ -216,6 +216,11 @@ void* writer(void *ptr) {
 }
 
 int main(int argc, char** argv) {
+    if(argc != 6) {
+        printf("USAGE: ./ldbb <CKPT_size * 5>\n");
+        exit(1);
+    }
+
     // Initialize the MPI environment. The two arguments to MPI Init are not
     // currently used by MPI implementations, but are there in case future
     // implementations might need the arguments.
@@ -306,7 +311,12 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 167772160; // checkpointing data size
+
+            tp.fileSize = atoi(argv[1]);
+            //tp.fileSize = 167772160; // small
+            //tp.fileSize = 872415232; // large
+            //tp.fileSize = 167772160; // mix
+
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -332,7 +342,12 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 285212672; // checkpointing data size
+
+            tp.fileSize = atoi(argv[2]);
+            //tp.fileSize = 285212672; // small
+            //tp.fileSize = 1258291200; // large
+            //tp.fileSize = 285212672; // mix
+
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -358,7 +373,12 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 654311424; // checkpointing data size
+
+            tp.fileSize = atoi(argv[3]);
+            //tp.fileSize = 285212672; // small
+            //tp.fileSize = 1577058304; // large
+            //tp.fileSize = 654311424; // mix
+
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -384,7 +404,12 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 1660944384; // checkpointing data size
+
+            tp.fileSize = atoi(argv[4]);
+            //tp.fileSize = 301989888; // small
+            //tp.fileSize = 1660944384; // large
+            //tp.fileSize = 1660944384; // mix
+
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 
@@ -410,7 +435,12 @@ int main(int argc, char** argv) {
             tp.rank = rank;
             tp.burstBuffer = NULL;
             tp.size = burstBufferMaxSize;
-            tp.fileSize = 2147483646; // checkpointing data size
+
+            tp.fileSize = atoi(argv[5]);
+            //tp.fileSize = 553648128; // small
+            //tp.fileSize = 2147483646; // large
+            //tp.fileSize = 2147483646; // mix
+
             tp.readBuffer = readBuffer;
             tp.ckptRun = ckptRun;
 

@@ -25,7 +25,8 @@ int main(int argc, char *argv[]) {
 
     string lineInFile;
     size_t found;
-
+	
+	// x is CKPT Run; y is writer rank
     double result[20][1000];
 
     if(myfile.is_open()) {
@@ -52,13 +53,69 @@ int main(int argc, char *argv[]) {
             }
         }
     }
+	
+	// store the summation of one application in one CKPT run
+	// x is CKPT Run; y is application number
+	double sum[5][5];
+	for(int i=0; i<5; i++) {
+		for(int j=0; j<5; j++) {
+			sum[i][j] = 0.0;
+		}
+	}
+	
+	// store the max value for one application in one CKPT run
+	// x is CKPT Run; y is application number
+	double max[5][5];
+	for(int i=0; i<5; i++) {
+		for(int j=0; j<5; j++) {
+			max[i][j] = -1.0;
+		}
+	}
 
-    for(int i=0; i<10; i++) {
-        for(int j=0; j<130; j++) {
-            cout<<result[i][j]<<" ";
+    for(int i=0; i<5; i++) {
+        for(int j=0; j<368; j++) {
+			
+			//cout<<result[i][j]<<" ";
+			
+            if(j == 0) {
+                continue;
+            }
+			else if(j % 8 == 7) {
+				continue;
+			}
+			else if(j >=1 && j <= 73) {
+				sum[i][0] += result[i][j];
+				if(result[i][j] > max[i][0]) max[i][0] = result[i][j];
+			}
+			else if(j >=74 && j <= 146) {
+				sum[i][1] += result[i][j];
+				if(result[i][j] > max[i][1]) max[i][1] = result[i][j];
+			}
+			else if(j >=147 && j <= 219) {
+				sum[i][2] += result[i][j];
+				if(result[i][j] > max[i][2]) max[i][2] = result[i][j];
+			}
+			else if(j >=220 && j <= 292) {
+				sum[i][3] += result[i][j];
+				if(result[i][j] > max[i][3]) max[i][3] = result[i][j];
+			}
+			else if(j >=293 && j <= 365) {
+				sum[i][4] += result[i][j];
+				if(result[i][j] > max[i][4]) max[i][4] = result[i][j];
+			}
+			else {
+				continue;
+			}
         }
-        cout<<endl;
+        //cout<<endl;
     }
+	
+	for(int i=0; i<5; i++) {
+		for(int j=0; j<5; j++) {
+			cout<<max[i][j]<<" ";
+		}
+		cout<<endl;
+	}
 
     return 0;
 }
