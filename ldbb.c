@@ -28,7 +28,7 @@ unsigned long burstBufferMaxSize = 4294967296; // 4GB = 4*1024*1024*1024
 
 unsigned long burstBufferOffset = 0;
 
-pthread_mutex_t lock_burstBufferOffset; // lock for burstBufferOffset
+//pthread_mutex_t lock_burstBufferOffset; // lock for burstBufferOffset
 
 struct threadParams {
     int rank; // the rank of current process
@@ -120,7 +120,7 @@ void* producer(void *ptr) {
         else {
             checkResult = 1;
 
-            pthread_mutex_lock(&lock_burstBufferOffset);
+            //pthread_mutex_lock(&lock_burstBufferOffset);
 
             MPI_Send(&checkResult, 1, MPI_INT, status.MPI_SOURCE, 1, MPI_COMM_WORLD);
             MPI_Recv(tp->burstBuffer, incomingDataSize, MPI_CHAR, MPI_ANY_SOURCE, 2, MPI_COMM_WORLD, &status);
@@ -128,7 +128,7 @@ void* producer(void *ptr) {
 
             insert(incomingDataSize);
 
-            pthread_mutex_unlock(&lock_burstBufferOffset);
+            //pthread_mutex_unlock(&lock_burstBufferOffset);
 
             dbg_print("BB producer %d: burst buffer receive %lu data from rank %d. burstBufferOffset is %lu\n", tp->rank, incomingDataSize, status.MPI_SOURCE, burstBufferOffset);
         }
@@ -143,7 +143,7 @@ void* consumer(void *ptr) {
     dbg_print("BB consumer %d: just entered, nothing been done yet\n", tp->rank);
     while(1) {
         if(burstBufferOffset > 0) {
-            pthread_mutex_lock(&lock_burstBufferOffset);
+            //pthread_mutex_lock(&lock_burstBufferOffset);
 
             char filename[64];
             char *prefix="/scratch.global/fan/rank";
@@ -167,7 +167,7 @@ void* consumer(void *ptr) {
 
             burstBufferOffset -= drainSize;
 
-            pthread_mutex_unlock(&lock_burstBufferOffset);
+            //pthread_mutex_unlock(&lock_burstBufferOffset);
 
             dbg_print("BB consumer %d: drained %lu amount of data to PFS, burstBufferOffset is %lu\n", tp->rank, drainSize, burstBufferOffset);
         }
